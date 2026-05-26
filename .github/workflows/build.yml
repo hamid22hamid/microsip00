@@ -78,7 +78,7 @@ jobs:
         Set-Location ".."
 
         # Check if PJSIP already built
-        if (Test-Path "pjproject/pjlib/lib/pjlib-i386-Win32-vc14-Release.lib") {
+        if (Test-Path "pjproject/lib/pjlib-i386-Win32-vc14-Release.lib") {
             Write-Host "PJSIP already built, skipping..."
             exit 0
         }
@@ -196,13 +196,13 @@ jobs:
 
         if (Test-Path $libSource) {
             # Copy all .lib files from pjproject
-            Get-ChildItem -Path "$libSource\*\lib\*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-ChildItem -Path "$libSource\lib\*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
                 Write-Host "Copying $($_.Name) to lib/"
                 Copy-Item $_.FullName -Destination "$libDest/" -Force -ErrorAction SilentlyContinue
             }
 
             # Also copy third_party libs
-            Get-ChildItem -Path "$libSource\third_party\*\lib\*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-ChildItem -Path "$libSource\third_party\lib\*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
                 Write-Host "Copying third_party lib: $($_.Name)"
                 Copy-Item $_.FullName -Destination "$libDest/" -Force -ErrorAction SilentlyContinue
             }
