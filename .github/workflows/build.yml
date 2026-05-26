@@ -107,44 +107,43 @@ jobs:
         Write-Host "Configuring PJSIP..."
 
         # Create config_site.h for MicroSIP
-        $configSite = @"
-/* MicroSIP Configuration for PJSIP */
-#ifndef __PJ_CONFIG_SITE_H__
-#define __PJ_CONFIG_SITE_H__
-
-#define PJ_CONFIG_MICROSIP 1
-
-/* Video support */
-#define PJMEDIA_HAS_VIDEO 1
-#define PJMEDIA_HAS_FFMPEG 1
-#define PJMEDIA_HAS_VPX 1
-
-/* Audio codecs */
-#define PJMEDIA_HAS_OPUS 1
-#define PJMEDIA_HAS_SILK 1
-#define PJMEDIA_HAS_G722 1
-#define PJMEDIA_HAS_G7221 1
-#define PJMEDIA_HAS_G726 1
-#define PJMEDIA_HAS_G729 1
-#define PJMEDIA_HAS_GSM 1
-#define PJMEDIA_HAS_SPEEX 1
-#define PJMEDIA_HAS_ILBC 1
-
-/* Security */
-#define PJMEDIA_HAS_SRTP 1
-#define PJMEDIA_HAS_TLS 1
-
-/* WebRTC audio processing */
-#define PJMEDIA_HAS_WEBRTC_AEC 1
-#define PJMEDIA_HAS_WEBRTC_VAD 1
-
-/* Include default config */
-#include <pj/config_site_sample.h>
-
-#endif /* __PJ_CONFIG_SITE_H__ */
-"@
-
-        Set-Content -Path "pjlib/include/pj/config_site.h" -Value $configSite
+        $configLines = @(
+          '/* MicroSIP Configuration for PJSIP */',
+          '#ifndef __PJ_CONFIG_SITE_H__',
+          '#define __PJ_CONFIG_SITE_H__',
+          '',
+          '#define PJ_CONFIG_MICROSIP 1',
+          '',
+          '/* Video support */',
+          '#define PJMEDIA_HAS_VIDEO 1',
+          '#define PJMEDIA_HAS_FFMPEG 1',
+          '#define PJMEDIA_HAS_VPX 1',
+          '',
+          '/* Audio codecs */',
+          '#define PJMEDIA_HAS_OPUS 1',
+          '#define PJMEDIA_HAS_SILK 1',
+          '#define PJMEDIA_HAS_G722 1',
+          '#define PJMEDIA_HAS_G7221 1',
+          '#define PJMEDIA_HAS_G726 1',
+          '#define PJMEDIA_HAS_G729 1',
+          '#define PJMEDIA_HAS_GSM 1',
+          '#define PJMEDIA_HAS_SPEEX 1',
+          '#define PJMEDIA_HAS_ILBC 1',
+          '',
+          '/* Security */',
+          '#define PJMEDIA_HAS_SRTP 1',
+          '#define PJMEDIA_HAS_TLS 1',
+          '',
+          '/* WebRTC audio processing */',
+          '#define PJMEDIA_HAS_WEBRTC_AEC 1',
+          '#define PJMEDIA_HAS_WEBRTC_VAD 1',
+          '',
+          '/* Include default config */',
+          '#include <pj/config_site_sample.h>',
+          '',
+          '#endif /* __PJ_CONFIG_SITE_H__ */'
+        )
+        Set-Content -Path "pjlib/include/pj/config_site.h" -Value $configLines
 
         Write-Host "Building PJSIP with MSBuild..."
 
@@ -302,51 +301,50 @@ jobs:
       run: |
         Set-Location "${{ github.workspace }}"
 
-        $installerScript = @"
-#define MyAppName "MicroSIP"
-#define MyAppVersion "3.22.3"
-#define MyAppPublisher "MicroSIP"
-#define MyAppURL "https://www.microsip.org"
-#define MyAppExeName "microsip.exe"
-
-[Setup]
-AppId={{MicroSIP-3.22.3}}
-AppName={#MyAppName}
-AppVersion={#MyAppVersion}
-AppPublisher={#MyAppPublisher}
-AppPublisherURL={#MyAppURL}
-AppSupportURL={#MyAppURL}
-AppUpdatesURL={#MyAppURL}
-DefaultDirName={autopf}\{#MyAppName}
-DisableProgramGroupPage=yes
-LicenseFile=LICENSE
-OutputDir=.
-OutputBaseFilename=MicroSIP-3.22.3
-SetupIconFile=res\microsip.ico
-Compression=lzma
-SolidCompression=yes
-WizardStyle=modern
-
-[Languages]
-Name: "english"; MessagesFile: "compiler:Default.isl"
-
-[Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-
-[Files]
-Source: "output\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "output\*.dll"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
-Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-
-[Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-
-[Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
-"@
-
-        Set-Content -Path "installer.iss" -Value $installerScript
+        $installerLines = @(
+          '#define MyAppName "MicroSIP"',
+          '#define MyAppVersion "3.22.3"',
+          '#define MyAppPublisher "MicroSIP"',
+          '#define MyAppURL "https://www.microsip.org"',
+          '#define MyAppExeName "microsip.exe"',
+          '',
+          '[Setup]',
+          'AppId={{MicroSIP-3.22.3}}',
+          'AppName={#MyAppName}',
+          'AppVersion={#MyAppVersion}',
+          'AppPublisher={#MyAppPublisher}',
+          'AppPublisherURL={#MyAppURL}',
+          'AppSupportURL={#MyAppURL}',
+          'AppUpdatesURL={#MyAppURL}',
+          'DefaultDirName={autopf}\{#MyAppName}',
+          'DisableProgramGroupPage=yes',
+          'LicenseFile=LICENSE',
+          'OutputDir=.',
+          'OutputBaseFilename=MicroSIP-3.22.3',
+          'SetupIconFile=res\microsip.ico',
+          'Compression=lzma',
+          'SolidCompression=yes',
+          'WizardStyle=modern',
+          '',
+          '[Languages]',
+          'Name: "english"; MessagesFile: "compiler:Default.isl"',
+          '',
+          '[Tasks]',
+          'Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked',
+          '',
+          '[Files]',
+          'Source: "output\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion',
+          'Source: "output\*.dll"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs',
+          'Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion',
+          '',
+          '[Icons]',
+          'Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"',
+          'Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon',
+          '',
+          '[Run]',
+          'Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, ''&'', ''&&'')}}"; Flags: nowait postinstall skipifsilent'
+        )
+        Set-Content -Path "installer.iss" -Value $installerLines
 
     - name: Build Installer
       shell: pwsh
