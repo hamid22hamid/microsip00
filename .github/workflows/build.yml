@@ -104,22 +104,45 @@ jobs:
           '#endif'
         )
         Set-Content -Path "pjlib/include/pj/config_site.h" -Value $configLines
+
+        # [FIX] Forcer le toolset v143 dans les props de PJSIP (sinon il reste en v140)
+        Write-Host "Patching PJSIP toolset to v143..."
+        $propsFile = "build\vs\pjproject-vs14-common-config.props"
+        if (Test-Path $propsFile) {
+            $content = Get-Content $propsFile -Raw
+            # Remplace toute valeur de PlatformToolset par v143
+            $content = $content -replace '<PlatformToolset>[^<]*</PlatformToolset>', '<PlatformToolset>v143</PlatformToolset>'
+            Set-Content -Path $propsFile -Value $content
+            Write-Host "Patched $propsFile"
+            Write-Host "Content check:"
+            Select-String -Path $propsFile -Pattern "PlatformToolset"
+        } else {
+            Write-Host "Props file not found, will rely on command-line toolset"
+        }
+
         Write-Host "Building PJSIP with MSBuild..."
-        # PJSIP 2.15.1 fournit pjproject-vs14.sln (compatible VS2022, toolset v143 par defaut)
-        # On compile la cible pjsua_lib qui entraine toutes les dependances (pjlib, pjmedia, pjsip, etc.)
+        # PJSIP 2.15.1 : pjproject-vs14.sln. On FORCE v143 + SDK 10 pour windows-latest.
         if (Test-Path "pjproject-vs14.sln") {
-            Write-Host "Building pjsua_lib target from pjproject-vs14.sln..."
-            msbuild "pjproject-vs14.sln" /t:pjsua_lib /p:Configuration=Release /p:Platform=Win32 /m
+            Write-Host "Building pjsua_lib target (forcing v143)..."
+            msbuild "pjproject-vs14.sln" /t:pjsua_lib `
+                /p:Configuration=Release /p:Platform=Win32 `
+                /p:PlatformToolset=v143 `
+                /p:WindowsTargetPlatformVersion=10.0 `
+                /m
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "pjsua_lib build failed, trying full solution..."
-                msbuild "pjproject-vs14.sln" /p:Configuration=Release /p:Platform=Win32 /m
+                Write-Host "pjsua_lib failed, trying libpjproject target..."
+                msbuild "pjproject-vs14.sln" /t:libpjproject `
+                    /p:Configuration=Release /p:Platform=Win32 `
+                    /p:PlatformToolset=v143 `
+                    /p:WindowsTargetPlatformVersion=10.0 `
+                    /m
             }
         } else {
             Write-Host "ERROR: pjproject-vs14.sln not found!"
             Get-ChildItem -Filter "*.sln"
             exit 1
         }
-        Write-Host "PJSIP build completed"
+        Write-Host "PJSIP build step done"
 
     - name: Copy PJSIP Libraries
       shell: pwsh
