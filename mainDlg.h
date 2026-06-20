@@ -1,269 +1,449 @@
 /*
- * Copyright (C) 2011-2024 MicroSIP (http://www.microsip.org)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * IVRSession.cpp - Module IVR intégré à MicroSIP
  */
-
-#pragma once
-
 #include "stdafx.h"
+#include "IVRSession.h"
+#include "mainDlg.h"
+#include "global.h"
 
-#include <afxwin.h>
+#include <windows.h>
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
 
-#include "define.h"
-#include "json.h"
-#include "addons.h"
-#include <pjsua-lib/pjsua.h>
-#include <pjsua-lib/pjsua_internal.h>
+#include <process.h>  // _beginthreadex
 
-#ifdef NDEBUG
-#pragma comment(lib, "libpjproject-i386-Win32-vc14-Release-Static.lib")
-#else
-#pragma comment(lib, "libpjproject-i386-Win32-vc14-Debug-Static.lib")
-#endif
+extern CmainDlg* mainDlg;
 
-#include "MMNotificationClient.h"
+// UM_IVR_AUDIO_DONE et UM_IVR_NEXT_STEP sont définis dans l'enum de global.h
 
-#include "BaseDialog.h"
-#include "RinginDlg.h"
-#include "AccountDlg.h"
-#include "SettingsDlg.h"
-#include "ShortcutsDlg.h"
-#include "MessagesDlg.h"
-
-#include "Dialer.h"
-#include "Contacts.h"
-#include "Calls.h"
-#include "Preview.h"
-#include "Transfer.h"
-#include "StatusBar.h"
-
-// CmainDlg dialog
-class CmainDlg : public CBaseDialog
+// ─────────────────────────────────────────────────────────────────────────────
+// PROFILS — modifie les chemins .wav et les steps ici
+// ─────────────────────────────────────────────────────────────────────────────
+IVRProfile IVR_MakeProfileEcole()
 {
-	// Construction
-public:
-	CmainDlg(CWnd* pParent = NULL);	// standard constructor
-	~CmainDlg();
+	IVRProfile p;
+	p.id = "ecole";
+	p.label = "Collecte Ecole";
+	p.steps = {
+		{ "telephone", "Telephone ecole", "C:\\IVR\\demande_telephone.wav", 7, 0 },
+		{ "poste",     "Poste",           "C:\\IVR\\demande_poste.wav",     0, 0 }
+	};
+	return p;
+}
 
-	// Dialog Data
-	enum { IDD = IDD_MAIN };
+IVRProfile IVR_MakeProfileClasse()
+{
+	IVRProfile p;
+	p.id = "classe";
+	p.label = "Collecte Classe";
+	p.steps = {
+		{ "numero_classe", "Numero de classe", "C:\\IVR\\demande_classe.wav", 1, 0 }
+	};
+	return p;
+}
 
-	bool m_startMinimized;
-	CButton m_ButtonMenu;
-	SettingsDlg* settingsDlg;
-	bool shortcutsEnabled;
-	bool shortcutsBottom;
-	int shortcutsCount;
-	ShortcutsDlg* shortcutsDlg;
-	MessagesDlg* messagesDlg;
-	Transfer* transferDlg;
-	AccountDlg* accountDlg;
+// ─────────────────────────────────────────────────────────────────────────────
+// Callback EOF PJSIP — appelé sur le thread audio quand le WAV se termine.
+// On ne fait QUE poster un message : tout le travail se fait sur le thread UI.
+// ─────────────────────────────────────────────────────────────────────────────
+pj_status_t on_ivr_wav_end_callback(pjmedia_port* port, void* usr_data)
+{
+	if (mainDlg && IsWindow(mainDlg->m_hWnd)) {
+		mainDlg->PostMessage(UM_IVR_AUDIO_DONE, 0, 0);
+	}
+	// Retourner autre chose que PJ_SUCCESS pour que PJSIP ne reboucle pas le fichier
+	return -1;
+}
 
-	Dialer* pageDialer;
-	Contacts* pageContacts;
-	bool usersDirectoryLoaded;
-	bool shortcutsURLLoaded;
-	Calls* pageCalls;
+// ─────────────────────────────────────────────────────────────────────────────
 
-	BOOL notStopRinging;
-	CArray <RinginDlg*> ringinDlgs;
-	CString dialNumberDelayed;
-	pjsua_call_id autoAnswerTimerCallId;
-	pjsua_call_id autoAnswerPlayCallId;
-	pjsua_call_id forwardingTimerCallId;
-	
-	player_eof_data *player_eof_data;
+IVRSession::IVRSession()
+	: m_state(IVRState::IDLE)
+	, m_callId(PJSUA_INVALID_ID)
+	, m_stepIndex(0)
+	, m_playerId(PJSUA_INVALID_ID)
+	, m_panelHost("localhost")
+	, m_panelPort(3000)
+	, m_panelPath("/api/ivr-event")
+{
+}
 
-	int iconStatusbar;
-	CImageList* imageListStatus;
-	int widthAdd;
-	int heightAdd;
-	bool missed;
+IVRSession::~IVRSession()
+{
+	StopPlayer();
+}
 
-	CString callIdIncomingIgnore;
-	CList<int,int> toneCalls;
-	CList<int,int> attendedCalls;
-	CList<CString> audioCodecList;
-	CList<int> confernceCalls;
-	
-	void InitUI();
-	void ShowTrayIcon();
-	void OnCreated();
-	void PJCreate();
-	void PJCreateRaw();
-	void PJDestroy(bool exit = false);
-	void PJAccountAdd();
-	void PJAccountAddRaw();
-	void PJAccountAddLocal();
-	void PJAccountDelete(bool deep = false, bool exit = false, CStringA code = "");
-	void PJAccountDeleteLocal();
-	void PJAccountConfig(pjsua_acc_config *acc_cfg, Account *account);
-	void PJAudioCodecs();
-#ifdef _GLOBAL_VIDEO
-	void PJVideoCodecs();
-#endif
+void IVRSession::Start(const IVRProfile& profile, pjsua_call_id callId)
+{
+	if (callId == PJSUA_INVALID_ID) return;
+	if (pjsua_get_state() != PJSUA_STATE_RUNNING) return;
 
-	bool CommandLine(CString params);
-	void TabFocusSet() override;
-	void UpdateWindowText(CString = CString(), int icon = IDI_DEFAULT, bool afterRegister = false);
-	void PublishStatus(bool online = true, bool init=false);
-	void TrayIconUpdateTip();
-	void BaloonPopup(CString title, CString message, DWORD flags = NIIF_WARNING);
-	void SwitchDND(int state = -1, bool update = false);
-	bool GotoTabLParam(LPARAM lParam);
-	bool GotoTab(int i, CTabCtrl* tab = NULL) override;
-	void ProcessCommand(CString str) override;
-	void DialNumberFromCommandLine(CString params);
-	void DialNumber(CString params);
-	bool MakeCall(CString number, bool hasVideo = false, bool fromCommandLine = false, bool noTransform = false, CString name = _T(""));
-	bool MessagesOpen(CString number, bool forCall = false, bool noTransform = false, CString name = _T(""));
-	bool AutoAnswer(pjsua_call_id call_id, bool force = false);
-	pjsua_call_id CurrentCallId();
-	CString GetNameForCall(SIPURI& sipuri, call_user_data* user_data, CString& numberOriginal);
+	// Vérifie que l'appel est bien confirmé
+	pjsua_call_info ci;
+	if (pjsua_call_get_info(callId, &ci) != PJ_SUCCESS) return;
+	if (ci.state != PJSIP_INV_STATE_CONFIRMED) return;
 
-	void ShortcutAction(Shortcut *shortcut, bool block = false, bool second = false);
-	void ShortcutsRemoveAll();
-	bool isSubscribed;
-	void SubsribeNumber(CString *number);
-	void UnsubscribeNumber(CString* number);
-	void Subscribe();
-	void Unsubscribe();
-	void PlayerPlay(CString filename, bool noLoop = false, bool inCall = false, bool isAA = false);
-	BOOL CopyStringToClipboard( IN const CString & str );
-	void OnTimerProgress();
-	void OnTimerCall();
-	void OnTimerNetworkChange();
+	StopPlayer();
+	m_profile = profile;
+	m_callId = callId;
+	m_stepIndex = 0;
+	m_currentDigits.clear();
+	m_results.clear();
 
-	void UsersDirectoryLoad(bool update = false);
-	afx_msg LRESULT onUsersDirectoryLoaded(WPARAM wParam,LPARAM lParam);
-	LRESULT onShortcutsURLLoaded(WPARAM wParam, LPARAM lParam);
-	void ShortcutsURLLoad();
-	afx_msg LRESULT onCustomLoaded(WPARAM wParam, LPARAM lParam);
-	void SetupJumpList();
-	void RemoveJumpList();
-	void MainPopupMenu(bool isMenuButton = false);
-	void SetPaneText2(CString str = _T(""));
-	void AccountSettingsPendingSave();
-	void OnAccountChanged(bool init = false);
-	void OpenTransferDlg(CWnd *pParent, msip_action action, pjsua_call_id call_id = PJSUA_INVALID_ID, Contact *selectedContact = NULL);
-	void UpdateSoundDevicesIds();
-	void PlayerStop();
-#ifdef _GLOBAL_VIDEO
-	Preview* previewWin;
-	int VideoCaptureDeviceId(CString name=_T(""));
-#endif
-	void MessagesIncoming(CString* number, CString* message, CTime* pTime = NULL);
+	std::string payload = "{\"callId\":" + std::to_string((int)callId) +
+		",\"profile\":\"" + JsonEscape(profile.id) +
+		"\",\"label\":\"" + JsonEscape(profile.label) +
+		"\",\"totalSteps\":" + std::to_string(profile.steps.size()) + "}";
+	SendEvent("ivr_started", payload);
 
-	bool CommandCallAnswer();
-	bool CommandCallReject();
-	bool CommandCallPickup(CString number);
+	PlayCurrentStep();
+}
 
-protected:
-	virtual void DoDataExchange(CDataExchange* pDX);	// DDX/DDV support
+void IVRSession::Stop()
+{
+	StopPlayer();
+	m_currentDigits.clear();
+	m_stepIndex = 0;
+	m_results.clear();
+	m_callId = PJSUA_INVALID_ID;
+	TransitionTo(IVRState::IDLE);
+}
 
-	// Implementation
-protected:
-	HICON m_hIcon;
-	HICON iconSmall;
-	HICON iconInactive;
-	HICON iconMissed;
-	NOTIFYICONDATA tnd;
-	StatusBar m_bar;
-	CMMNotificationClient *mmNotificationClient;
+// ─────────────────────────────────────────────────────────────────────────────
+// DTMF reçu
+// ─────────────────────────────────────────────────────────────────────────────
+void IVRSession::OnDTMF(char digit)
+{
+	if (m_state != IVRState::COLLECTING && m_state != IVRState::PLAYING) return;
+	if (m_stepIndex >= (int)m_profile.steps.size()) return;
 
-	unsigned char m_tabPrev;
+	const IVRStep& step = m_profile.steps[m_stepIndex];
 
-	DWORD m_lastInputTime;
-	int m_idleCounter;
-	pjrpid_activity m_PresenceStatus;
-	bool newMessages;
-		
-	afx_msg int OnCreate(LPCREATESTRUCT lpCreateStruct);
-	afx_msg void OnDestroy();
-	virtual BOOL OnInitDialog();
-	virtual void PostNcDestroy();
-	virtual LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam);
-	virtual BOOL PreTranslateMessage(MSG* pMsg);
+	// '*' = recommence le step en cours
+	if (digit == '*') {
+		ResetCurrentStep();
+		std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+			",\"stepId\":\"" + JsonEscape(step.id) +
+			"\",\"stepIndex\":" + std::to_string(m_stepIndex) + "}";
+		SendEvent("step_reset", payload);
+		PlayCurrentStep();
+		return;
+	}
 
-	// Generated message map functions
-	afx_msg LRESULT OnUpdateWindowText(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onTrayNotify(WPARAM, LPARAM);
-	afx_msg LRESULT onCreateRingingDlg(WPARAM, LPARAM);
-	afx_msg LRESULT onRefreshLevels(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onRegState2(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onCallState(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onIncomingCall(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onMWIInfo(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onCallMediaState(WPARAM, LPARAM);
-	afx_msg LRESULT onCallTransferStatus(WPARAM, LPARAM);
-	afx_msg LRESULT onPager(WPARAM, LPARAM);
-	afx_msg LRESULT onPagerStatus(WPARAM, LPARAM);
-	afx_msg LRESULT onBuddyState(WPARAM, LPARAM);
-	afx_msg LRESULT onCopyData(WPARAM, LPARAM);
-	afx_msg LRESULT CreationComplete(WPARAM, LPARAM);
-	DECLARE_MESSAGE_MAP()
-public:
-	afx_msg LRESULT OnNetworkChange(WPARAM, LPARAM);
-	afx_msg LRESULT OnRestart(WPARAM, LPARAM);
-	afx_msg LRESULT OnPowerBroadcast(WPARAM, LPARAM);
-	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
-	afx_msg BOOL OnQueryEndSession();
-	afx_msg void OnBnClickedOk();
-	afx_msg void OnBnClickedMenu();
-	afx_msg void OnClose();
-	afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd *pWnd, UINT nCtlColor);
-	afx_msg void OnContextMenu(CWnd *pWnd, CPoint point );
-	afx_msg BOOL OnDeviceChange(UINT nEventType, DWORD_PTR dwData);
-	afx_msg void OnSessionChange(UINT nSessionState, UINT nId);
-	afx_msg void OnMove(int x, int y);
-	afx_msg void OnSize(UINT type, int w, int h);
-	afx_msg LRESULT onShellHookMessage(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onCallAnswer(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onCallHangup(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onTabIconUpdate(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onPlayerPlay(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onPlayerStop(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT onCommandLine(WPARAM wParam,LPARAM lParam);
-	afx_msg LRESULT OnAccount(WPARAM wParam,LPARAM lParam);
-	afx_msg void OnMenuAccountAdd();
-	afx_msg void OnMenuAccountEdit(UINT nID);
-	afx_msg void OnMenuAccountChange(UINT nID);
-	afx_msg void OnMenuAccountLocalEdit();
-	afx_msg void OnMenuCustomRange(UINT nID);
-	afx_msg void OnMenuSettings();
-	afx_msg void OnMenuShortcuts();
-	afx_msg void OnMenuAlwaysOnTop();
-	afx_msg void OnMenuLog();
-	afx_msg void OnMenuExit();
-	afx_msg void OnTimer (UINT_PTR TimerVal);
-	afx_msg void OnTcnSelchangeTab(NMHDR *pNMHDR, LRESULT *pResult);
-	afx_msg void OnTcnSelchangingTab(NMHDR *pNMHDR, LRESULT *pResult);
-	afx_msg void OnMenuWebsite();
-	afx_msg void OnMenuHelp();
-	afx_msg void OnMenuAddl();
-	afx_msg void OnMuteInput();
-	afx_msg void OnMuteOutput();
-	afx_msg void OnCheckUpdates();
-	afx_msg void CheckUpdates();
-	afx_msg LRESULT OnUpdateCheckerLoaded(WPARAM wParam, LPARAM lParam);
-#ifdef _GLOBAL_VIDEO
-	afx_msg void createPreviewWin();
-#endif
-	afx_msg	void OnUpdatePane(CCmdUI* pCmdUI);
+	// '#' = valide le step
+	if (digit == '#') {
+		if (step.minDigits > 0 && (int)m_currentDigits.size() < step.minDigits) {
+			// pas assez de chiffres, on ignore le #
+			SendEvent("dtmf_ignored",
+				"{\"callId\":" + std::to_string((int)m_callId) +
+				",\"reason\":\"min_digits\"}");
+			return;
+		}
+		if (m_currentDigits.empty()) return;
+
+		m_results[step.id] = m_currentDigits;
+		std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+			",\"stepId\":\"" + JsonEscape(step.id) +
+			"\",\"stepLabel\":\"" + JsonEscape(step.label) +
+			"\",\"value\":\"" + JsonEscape(m_currentDigits) +
+			"\",\"stepIndex\":" + std::to_string(m_stepIndex) +
+			",\"results\":" + ResultsToJSON() + "}";
+		SendEvent("step_validated", payload);
+
+		AdvanceToNextStep();
+		return;
+	}
+
+	// Chiffre 0-9 (et A-D au cas où)
+	if (digit < '0' || digit > '9') return;
+
+	// Si on tape pendant la lecture, on coupe l'audio et on passe en collecte
+	if (m_state == IVRState::PLAYING) {
+		StopPlayer();
+		TransitionTo(IVRState::COLLECTING);
+	}
+
+	m_currentDigits += digit;
+
+	std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+		",\"stepId\":\"" + JsonEscape(step.id) +
+		"\",\"digit\":\"" + std::string(1, digit) +
+		"\",\"collected\":\"" + JsonEscape(m_currentDigits) +
+		"\",\"stepIndex\":" + std::to_string(m_stepIndex) + "}";
+	SendEvent("dtmf_digit", payload);
+
+	// Auto-validation si maxDigits atteint
+	if (step.maxDigits > 0 && (int)m_currentDigits.size() >= step.maxDigits) {
+		m_results[step.id] = m_currentDigits;
+		std::string vpayload = "{\"callId\":" + std::to_string((int)m_callId) +
+			",\"stepId\":\"" + JsonEscape(step.id) +
+			"\",\"stepLabel\":\"" + JsonEscape(step.label) +
+			"\",\"value\":\"" + JsonEscape(m_currentDigits) +
+			"\",\"stepIndex\":" + std::to_string(m_stepIndex) +
+			",\"auto\":true,\"results\":" + ResultsToJSON() + "}";
+		SendEvent("step_validated", vpayload);
+		AdvanceToNextStep();
+	}
+}
+
+// Demande de jouer le step suivant (reçu via le message loop, thread UI)
+void IVRSession::OnNextStep()
+{
+	PlayCurrentStep();
+}
+
+// Fin de lecture d'un WAV (posté depuis le callback EOF, exécuté sur thread UI)
+void IVRSession::OnAudioDone()
+{
+	if (m_state == IVRState::PLAYING) {
+		StopPlayer();
+		TransitionTo(IVRState::COLLECTING);
+		if (m_stepIndex < (int)m_profile.steps.size()) {
+			const IVRStep& step = m_profile.steps[m_stepIndex];
+			std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+				",\"stepId\":\"" + JsonEscape(step.id) +
+				"\",\"stepIndex\":" + std::to_string(m_stepIndex) + "}";
+			SendEvent("audio_done", payload);
+		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Private
+// ─────────────────────────────────────────────────────────────────────────────
+void IVRSession::PlayCurrentStep()
+{
+	if (m_stepIndex >= (int)m_profile.steps.size()) {
+		FinalizeAndHold();
+		return;
+	}
+	const IVRStep& step = m_profile.steps[m_stepIndex];
+	m_currentDigits.clear();
+
+	std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+		",\"stepId\":\"" + JsonEscape(step.id) +
+		"\",\"stepLabel\":\"" + JsonEscape(step.label) +
+		"\",\"stepIndex\":" + std::to_string(m_stepIndex) +
+		",\"totalSteps\":" + std::to_string(m_profile.steps.size()) + "}";
+	SendEvent("step_started", payload);
+
+	TransitionTo(IVRState::PLAYING);
+
+	if (!PlayWavInCall(step.audioFile)) {
+		// Si le WAV ne peut pas jouer, on passe direct en collecte
+		TransitionTo(IVRState::COLLECTING);
+	}
+}
+
+void IVRSession::AdvanceToNextStep()
+{
+	m_stepIndex++;
+	m_currentDigits.clear();
+	if (m_stepIndex >= (int)m_profile.steps.size()) {
+		FinalizeAndHold();
+	}
+	else {
+		// Petit délai naturel avant le prochain message via le message loop
+		if (mainDlg && IsWindow(mainDlg->m_hWnd)) {
+			mainDlg->PostMessage(UM_IVR_NEXT_STEP, 0, 0);
+		}
+		else {
+			PlayCurrentStep();
+		}
+	}
+}
+
+void IVRSession::ResetCurrentStep()
+{
+	m_currentDigits.clear();
+	StopPlayer();
+}
+
+void IVRSession::FinalizeAndHold()
+{
+	std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+		",\"profile\":\"" + JsonEscape(m_profile.id) +
+		"\",\"results\":" + ResultsToJSON() + "}";
+	SendEvent("sequence_complete", payload);
+
+	StopPlayer();
+
+	// Hold via PJSIP directement (comme MessagesDlg::OnBnClickedHold).
+	// pjsua_call_set_hold déclenche on_call_media_state qui met à jour
+	// le bouton Hold automatiquement (UpdateHoldButton).
+	if (m_callId != PJSUA_INVALID_ID) {
+		pjsua_call_info ci;
+		if (pjsua_call_get_info(m_callId, &ci) == PJ_SUCCESS) {
+			if (ci.media_cnt > 0 &&
+				ci.media_status != PJSUA_CALL_MEDIA_LOCAL_HOLD &&
+				ci.media_status != PJSUA_CALL_MEDIA_NONE) {
+				pjsua_call_set_hold(m_callId, NULL);
+			}
+		}
+	}
+
+	TransitionTo(IVRState::HOLD);
+	SendEvent("call_hold",
+		"{\"callId\":" + std::to_string((int)m_callId) +
+		",\"results\":" + ResultsToJSON() + "}");
+
+	// Séquence terminée ; l'agent reprend l'appel via le bouton Hold de MicroSIP
+	m_state = IVRState::DONE;
+}
+
+// Joue un WAV dans l'appel (client) + en local (monitoring agent)
+bool IVRSession::PlayWavInCall(const std::string& wavPath)
+{
+	if (pjsua_get_state() != PJSUA_STATE_RUNNING || m_callId == PJSUA_INVALID_ID) return false;
+
+	pjsua_call_info ci;
+	if (pjsua_call_get_info(m_callId, &ci) != PJ_SUCCESS) return false;
+	if (ci.conf_slot < 0) return false;
+
+	// Convertit le chemin UTF-8 en pj_str
+	pj_str_t file = pj_str(const_cast<char*>(wavPath.c_str()));
+
+	if (pjsua_player_create(&file, PJMEDIA_FILE_NO_LOOP, &m_playerId) != PJ_SUCCESS) {
+		m_playerId = PJSUA_INVALID_ID;
+		return false;
+	}
+
+	// Branche le callback de fin
+	pjmedia_port* port = nullptr;
+	if (pjsua_player_get_port(m_playerId, &port) == PJ_SUCCESS && port) {
+		pjmedia_wav_player_set_eof_cb(port, this, &on_ivr_wav_end_callback);
+	}
+
+	pjsua_conf_port_id playerPort = pjsua_player_get_conf_port(m_playerId);
+
+	// → vers le client (dans l'appel)
+	pjsua_conf_connect(playerPort, ci.conf_slot);
+	// → vers le speaker local (monitoring agent)
+	pjsua_conf_connect(playerPort, 0);
+
+	return true;
+}
+
+void IVRSession::StopPlayer()
+{
+	if (m_playerId == PJSUA_INVALID_ID) return;
+	if (pjsua_get_state() == PJSUA_STATE_RUNNING) {
+		pjsua_conf_port_id playerPort = pjsua_player_get_conf_port(m_playerId);
+		// Déconnecte de l'appel si encore valide
+		pjsua_call_info ci;
+		if (m_callId != PJSUA_INVALID_ID &&
+			pjsua_call_get_info(m_callId, &ci) == PJ_SUCCESS && ci.conf_slot >= 0) {
+			pjsua_conf_disconnect(playerPort, ci.conf_slot);
+		}
+		pjsua_conf_disconnect(playerPort, 0);
+		pjsua_player_destroy(m_playerId);
+	}
+	m_playerId = PJSUA_INVALID_ID;
+}
+
+void IVRSession::TransitionTo(IVRState s)
+{
+	m_state = s;
+	const char* str = "UNKNOWN";
+	switch (s) {
+		case IVRState::IDLE:       str = "IDLE"; break;
+		case IVRState::PLAYING:    str = "PLAYING"; break;
+		case IVRState::COLLECTING: str = "COLLECTING"; break;
+		case IVRState::HOLD:       str = "HOLD"; break;
+		case IVRState::DONE:       str = "DONE"; break;
+	}
+	SendEvent("state_change",
+		"{\"callId\":" + std::to_string((int)m_callId) +
+		",\"state\":\"" + str + "\"}");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP non-bloquant vers le Live Panel (thread Win32 natif)
+// ─────────────────────────────────────────────────────────────────────────────
+struct IVRHttpJob {
+	std::string host;
+	int         port;
+	std::string path;
+	std::string body;
 };
 
-extern CmainDlg *mainDlg;
-void on_buddy_state(pjsua_buddy_id buddy_id);
+static unsigned __stdcall IVR_HttpThreadProc(void* arg)
+{
+	IVRHttpJob* job = static_cast<IVRHttpJob*>(arg);
+
+	std::wstring whost(job->host.begin(), job->host.end());
+	std::wstring wpath(job->path.begin(), job->path.end());
+
+	HINTERNET hSession = WinHttpOpen(L"MicroSIP-IVR/1.0",
+		WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+		WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+	if (hSession) {
+		HINTERNET hConnect = WinHttpConnect(hSession, whost.c_str(),
+			(INTERNET_PORT)job->port, 0);
+		if (hConnect) {
+			HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", wpath.c_str(),
+				NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+			if (hRequest) {
+				WinHttpAddRequestHeaders(hRequest,
+					L"Content-Type: application/json", (ULONG)-1L,
+					WINHTTP_ADDREQ_FLAG_ADD);
+				WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+					(LPVOID)job->body.c_str(), (DWORD)job->body.size(),
+					(DWORD)job->body.size(), 0);
+				WinHttpReceiveResponse(hRequest, NULL);
+				WinHttpCloseHandle(hRequest);
+			}
+			WinHttpCloseHandle(hConnect);
+		}
+		WinHttpCloseHandle(hSession);
+	}
+
+	delete job;
+	return 0;
+}
+
+void IVRSession::SendEvent(const std::string& eventType, const std::string& jsonData)
+{
+	IVRHttpJob* job = new IVRHttpJob();
+	job->host = m_panelHost;
+	job->port = m_panelPort;
+	job->path = m_panelPath;
+	job->body = "{\"event\":\"" + eventType + "\",\"data\":" + jsonData + "}";
+
+	unsigned tid = 0;
+	HANDLE h = (HANDLE)_beginthreadex(NULL, 0, &IVR_HttpThreadProc, job, 0, &tid);
+	if (h) {
+		CloseHandle(h); // on n'attend pas, fire-and-forget
+	} else {
+		delete job; // échec de création du thread
+	}
+}
+
+std::string IVRSession::ResultsToJSON() const
+{
+	std::string json = "{";
+	bool first = true;
+	for (const auto& kv : m_results) {
+		if (!first) json += ",";
+		json += "\"" + JsonEscape(kv.first) + "\":\"" + JsonEscape(kv.second) + "\"";
+		first = false;
+	}
+	json += "}";
+	return json;
+}
+
+std::string IVRSession::JsonEscape(const std::string& s)
+{
+	std::string out;
+	for (char c : s) {
+		switch (c) {
+			case '"':  out += "\\\""; break;
+			case '\\': out += "\\\\"; break;
+			case '\n': out += "\\n"; break;
+			case '\r': out += "\\r"; break;
+			case '\t': out += "\\t"; break;
+			default:   out += c; break;
+		}
+	}
+	return out;
+}
