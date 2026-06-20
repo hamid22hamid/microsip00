@@ -84,22 +84,22 @@ jobs:
           '#ifndef __PJ_CONFIG_SITE_H__',
           '#define __PJ_CONFIG_SITE_H__',
           '#define PJ_CONFIG_MICROSIP 1',
-          '#define PJMEDIA_HAS_VIDEO 1',
-          '#define PJMEDIA_HAS_FFMPEG 1',
-          '#define PJMEDIA_HAS_VPX 1',
-          '#define PJMEDIA_HAS_OPUS 1',
-          '#define PJMEDIA_HAS_SILK 1',
+          '#define PJMEDIA_HAS_VIDEO 0',
+          '#define PJMEDIA_HAS_FFMPEG 0',
+          '#define PJMEDIA_HAS_VPX 0',
+          '#define PJMEDIA_HAS_OPUS 0',
+          '#define PJMEDIA_HAS_SILK 0',
           '#define PJMEDIA_HAS_G722 1',
           '#define PJMEDIA_HAS_G7221 1',
           '#define PJMEDIA_HAS_G726 1',
-          '#define PJMEDIA_HAS_G729 1',
+          '#define PJMEDIA_HAS_G729 0',
           '#define PJMEDIA_HAS_GSM 1',
           '#define PJMEDIA_HAS_SPEEX 1',
           '#define PJMEDIA_HAS_ILBC 1',
           '#define PJMEDIA_HAS_SRTP 1',
           '#define PJMEDIA_HAS_TLS 1',
-          '#define PJMEDIA_HAS_WEBRTC_AEC 1',
-          '#define PJMEDIA_HAS_WEBRTC_VAD 1',
+          '#define PJMEDIA_HAS_WEBRTC_AEC 0',
+          '#define PJMEDIA_HAS_WEBRTC_VAD 0',
           '#include <pj/config_site_sample.h>',
           '#endif'
         )
@@ -122,27 +122,33 @@ jobs:
 
         Write-Host "Building PJSIP with MSBuild..."
         # PJSIP 2.15.1 : pjproject-vs14.sln. On FORCE v143 + SDK 10 pour windows-latest.
+        # MicroSIP a besoin de libpjproject (le .lib UNIFIE), donc on construit cette cible.
         if (Test-Path "pjproject-vs14.sln") {
+            # 1. Construire pjsua_lib (toutes les sous-libs)
             Write-Host "Building pjsua_lib target (forcing v143)..."
             msbuild "pjproject-vs14.sln" /t:pjsua_lib `
                 /p:Configuration=Release /p:Platform=Win32 `
                 /p:PlatformToolset=v143 `
                 /p:WindowsTargetPlatformVersion=10.0 `
                 /m
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "pjsua_lib failed, trying libpjproject target..."
-                msbuild "pjproject-vs14.sln" /t:libpjproject `
-                    /p:Configuration=Release /p:Platform=Win32 `
-                    /p:PlatformToolset=v143 `
-                    /p:WindowsTargetPlatformVersion=10.0 `
-                    /m
-            }
+            # 2. Construire libpjproject (le .lib UNIFIE dont MicroSIP a besoin au lien)
+            Write-Host "Building libpjproject target (lib unifiee)..."
+            msbuild "pjproject-vs14.sln" /t:libpjproject `
+                /p:Configuration=Release /p:Platform=Win32 `
+                /p:PlatformToolset=v143 `
+                /p:WindowsTargetPlatformVersion=10.0 `
+                /m
         } else {
             Write-Host "ERROR: pjproject-vs14.sln not found!"
             Get-ChildItem -Filter "*.sln"
             exit 1
         }
         Write-Host "PJSIP build step done"
+        # Verifier que la lib unifiee a ete produite
+        Write-Host "=== Recherche de libpjproject*.lib ==="
+        Get-ChildItem -Path "." -Filter "libpjproject*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  trouve: $($_.FullName)"
+        }
 
     - name: Copy PJSIP Libraries
       shell: pwsh
