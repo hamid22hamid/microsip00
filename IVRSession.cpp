@@ -1,814 +1,449 @@
-/* 
- * Copyright (C) 2011-2016 MicroSIP (http://www.microsip.org)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA 
+/*
+ * IVRSession.cpp - Module IVR intégré à MicroSIP
  */
-
-#include "StdAfx.h"
-#include "Dialer.h"
-#include "global.h"
-#include "settings.h"
+#include "stdafx.h"
+#include "IVRSession.h"
 #include "mainDlg.h"
-#include "microsip.h"
-#include "Strsafe.h"
-#include "langpack.h"
+#include "global.h"
 
-Dialer::Dialer(CWnd* pParent /*=NULL*/)
-: CBaseDialog(Dialer::IDD, pParent)
+#include <windows.h>
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
+
+#include <process.h>  // _beginthreadex
+
+extern CmainDlg* mainDlg;
+
+// UM_IVR_AUDIO_DONE et UM_IVR_NEXT_STEP sont définis dans l'enum de global.h
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROFILS — modifie les chemins .wav et les steps ici
+// ─────────────────────────────────────────────────────────────────────────────
+IVRProfile IVR_MakeProfileEcole()
 {
-	Create (IDD, pParent);
+	IVRProfile p;
+	p.id = "ecole";
+	p.label = "Collecte Ecole";
+	p.steps = {
+		{ "telephone", "Telephone ecole", "C:\\IVR\\demande_telephone.wav", 7, 0 },
+		{ "poste",     "Poste",           "C:\\IVR\\demande_poste.wav",     0, 0 }
+	};
+	return p;
 }
 
-Dialer::~Dialer(void)
+IVRProfile IVR_MakeProfileClasse()
 {
+	IVRProfile p;
+	p.id = "classe";
+	p.label = "Collecte Classe";
+	p.steps = {
+		{ "numero_classe", "Numero de classe", "C:\\IVR\\demande_classe.wav", 1, 0 }
+	};
+	return p;
 }
 
-void Dialer::DoDataExchange(CDataExchange* pDX)
+// ─────────────────────────────────────────────────────────────────────────────
+// Callback EOF PJSIP — appelé sur le thread audio quand le WAV se termine.
+// On ne fait QUE poster un message : tout le travail se fait sur le thread UI.
+// ─────────────────────────────────────────────────────────────────────────────
+pj_status_t on_ivr_wav_end_callback(pjmedia_port* port, void* usr_data)
 {
-	CDialog::DoDataExchange(pDX);
-	DDX_Control(pDX, IDC_KEY_1, m_ButtonDialer1);
-	DDX_Control(pDX, IDC_KEY_2, m_ButtonDialer2);
-	DDX_Control(pDX, IDC_KEY_3, m_ButtonDialer3);
-	DDX_Control(pDX, IDC_KEY_4, m_ButtonDialer4);
-	DDX_Control(pDX, IDC_KEY_5, m_ButtonDialer5);
-	DDX_Control(pDX, IDC_KEY_6, m_ButtonDialer6);
-	DDX_Control(pDX, IDC_KEY_7, m_ButtonDialer7);
-	DDX_Control(pDX, IDC_KEY_8, m_ButtonDialer8);
-	DDX_Control(pDX, IDC_KEY_9, m_ButtonDialer9);
-	DDX_Control(pDX, IDC_KEY_0, m_ButtonDialer0);
-	DDX_Control(pDX, IDC_KEY_STAR, m_ButtonDialerStar);
-    DDX_Control(pDX, IDC_KEY_GRATE, m_ButtonDialerGrate);
-    DDX_Control(pDX, IDC_DELETE, m_ButtonDialerDelete);
-    DDX_Control(pDX, IDC_KEY_PLUS, m_ButtonDialerPlus);
-    DDX_Control(pDX, IDC_CLEAR, m_ButtonDialerClear);
-}
-
-BOOL Dialer::OnInitDialog()
-{
-	CBaseDialog::OnInitDialog();
-
-	TranslateDialog(this->m_hWnd);
-
-	DialedLoad();
-	
-	CComboBox *combobox= (CComboBox*)GetDlgItem(IDC_NUMBER);
-	combobox->SetWindowPos(NULL,0,0,combobox->GetDroppedWidth(),400,SWP_NOZORDER|SWP_NOMOVE);
-
-	CFont* font = this->GetFont();
-	LOGFONT lf;
-	font->GetLogFont(&lf);
-	lf.lfHeight = 22;
-	StringCchCopy(lf.lfFaceName,LF_FACESIZE,_T("Franklin Gothic Medium"));
-	m_font.CreateFontIndirect(&lf);
-	combobox->SetFont(&m_font);
-
-
-	GetDlgItem(IDC_KEY_1)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_2)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_3)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_4)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_5)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_6)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_7)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_8)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_9)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_0)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_STAR)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_GRATE)->SetFont(&m_font);
-	GetDlgItem(IDC_KEY_PLUS)->SetFont(&m_font);
-	GetDlgItem(IDC_CLEAR)->SetFont(&m_font);
-	GetDlgItem(IDC_DELETE)->SetFont(&m_font);
-
-	muteOutput = FALSE;
-	muteInput = FALSE;
-
-	CSliderCtrl *sliderCtrl;
-	sliderCtrl = (CSliderCtrl *)GetDlgItem(IDC_VOLUME_OUTPUT);
-	sliderCtrl->SetRange(0,200);
-	sliderCtrl->SetPos(200-accountSettings.volumeOutput);
-	sliderCtrl = (CSliderCtrl *)GetDlgItem(IDC_VOLUME_INPUT);
-	sliderCtrl->SetRange(0,200);
-	sliderCtrl->SetPos(200-accountSettings.volumeInput);
-
-	m_hIconMuteOutput = (HICON)LoadImage(
-		AfxGetInstanceHandle(),
-		MAKEINTRESOURCE(IDI_MUTE_OUTPUT),
-		IMAGE_ICON, 0, 0, LR_SHARED );
-	((CButton*)GetDlgItem(IDC_BUTTON_MUTE_OUTPUT))->SetIcon(m_hIconMuteOutput);
-	m_hIconMutedOutput = (HICON)LoadImage(
-		AfxGetInstanceHandle(),
-		MAKEINTRESOURCE(IDI_MUTED_OUTPUT),
-		IMAGE_ICON, 0, 0, LR_SHARED );
-	
-	m_hIconMuteInput = (HICON)LoadImage(
-		AfxGetInstanceHandle(),
-		MAKEINTRESOURCE(IDI_MUTE_INPUT),
-		IMAGE_ICON, 0, 0, LR_SHARED );
-	((CButton*)GetDlgItem(IDC_BUTTON_MUTE_INPUT))->SetIcon(m_hIconMuteInput);
-	m_hIconMutedInput = (HICON)LoadImage(
-		AfxGetInstanceHandle(),
-		MAKEINTRESOURCE(IDI_MUTED_INPUT),
-		IMAGE_ICON, 0, 0, LR_SHARED );
-	m_hIconHold = (HICON)LoadImage(
-		AfxGetInstanceHandle(),
-		MAKEINTRESOURCE(IDI_HOLD),
-		IMAGE_ICON, 0, 0, LR_SHARED );
-	((CButton*)GetDlgItem(IDC_HOLD))->SetIcon(m_hIconHold);
-	m_hIconTransfer = (HICON)LoadImage(
-		AfxGetInstanceHandle(),
-		MAKEINTRESOURCE(IDI_TRANSFER),
-		IMAGE_ICON, 0, 0, LR_SHARED );
-	((CButton*)GetDlgItem(IDC_TRANSFER))->SetIcon(m_hIconTransfer);
-#ifdef _GLOBAL_VIDEO
-	m_hIconVideo = (HICON)LoadImage(
-		AfxGetInstanceHandle(),
-		MAKEINTRESOURCE(IDI_VIDEO),
-		IMAGE_ICON, 0, 0, LR_SHARED );
-	((CButton*)GetDlgItem(IDC_VIDEO_CALL))->SetIcon(m_hIconVideo);
-#endif
-	m_hIconMessage = (HICON)LoadImage(
-		AfxGetInstanceHandle(),
-		MAKEINTRESOURCE(IDI_MESSAGE),
-		IMAGE_ICON, 0, 0, LR_SHARED );
-	((CButton*)GetDlgItem(IDC_MESSAGE))->SetIcon(m_hIconMessage);
-	
-	return TRUE;
-}
-
-void Dialer::PostNcDestroy()
-{
-	CBaseDialog::PostNcDestroy();
-	delete this;
-}
-
-BEGIN_MESSAGE_MAP(Dialer, CBaseDialog)
-	ON_BN_CLICKED(IDOK, OnBnClickedOk)
-	ON_BN_CLICKED(IDCANCEL, OnBnClickedCancel)
-	ON_BN_CLICKED(IDC_CALL, OnBnClickedCall)
-#ifdef _GLOBAL_VIDEO
-	ON_BN_CLICKED(IDC_VIDEO_CALL, OnBnClickedVideoCall)
-#endif
-	ON_BN_CLICKED(IDC_MESSAGE, OnBnClickedMessage)
-	ON_BN_CLICKED(IDC_HOLD, OnBnClickedHold)
-	ON_BN_CLICKED(IDC_IVR_ECOLE, OnBnClickedIvrEcole)     // [IVR_ADDON]
-	ON_BN_CLICKED(IDC_IVR_CLASSE, OnBnClickedIvrClasse)   // [IVR_ADDON]
-	ON_BN_CLICKED(IDC_TRANSFER, OnBnClickedTransfer)
-	ON_BN_CLICKED(IDC_END, OnBnClickedEnd)
-	ON_BN_CLICKED(IDC_BUTTON_MUTE_OUTPUT, &Dialer::OnBnClickedMuteOutput)
-	ON_BN_CLICKED(IDC_BUTTON_MUTE_INPUT, &Dialer::OnBnClickedMuteInput)
-	ON_WM_RBUTTONUP()
-	ON_WM_LBUTTONUP()
-	ON_WM_MOUSEMOVE()
-	ON_CBN_EDITCHANGE(IDC_NUMBER, &Dialer::OnCbnEditchangeComboAddr)
-	ON_CBN_SELCHANGE(IDC_NUMBER, &Dialer::OnCbnSelchangeComboAddr)
-	ON_BN_CLICKED(IDC_KEY_1, &Dialer::OnBnClickedKey1)
-	ON_BN_CLICKED(IDC_KEY_2, &Dialer::OnBnClickedKey2)
-	ON_BN_CLICKED(IDC_KEY_3, &Dialer::OnBnClickedKey3)
-	ON_BN_CLICKED(IDC_KEY_4, &Dialer::OnBnClickedKey4)
-	ON_BN_CLICKED(IDC_KEY_5, &Dialer::OnBnClickedKey5)
-	ON_BN_CLICKED(IDC_KEY_6, &Dialer::OnBnClickedKey6)
-	ON_BN_CLICKED(IDC_KEY_7, &Dialer::OnBnClickedKey7)
-	ON_BN_CLICKED(IDC_KEY_8, &Dialer::OnBnClickedKey8)
-	ON_BN_CLICKED(IDC_KEY_9, &Dialer::OnBnClickedKey9)
-	ON_BN_CLICKED(IDC_KEY_STAR, &Dialer::OnBnClickedKeyStar)
-	ON_BN_CLICKED(IDC_KEY_0, &Dialer::OnBnClickedKey0)
-	ON_BN_CLICKED(IDC_KEY_GRATE, &Dialer::OnBnClickedKeyGrate)
-	ON_BN_CLICKED(IDC_KEY_PLUS, &Dialer::OnBnClickedKeyPlus)
-	ON_BN_CLICKED(IDC_CLEAR, &Dialer::OnBnClickedClear)
-	ON_BN_CLICKED(IDC_DELETE, &Dialer::OnBnClickedDelete)
-	ON_WM_VSCROLL()
-END_MESSAGE_MAP()
-
-BOOL Dialer::PreTranslateMessage(MSG* pMsg)
-{
-	BOOL catched = FALSE;
-	BOOL isEdit = FALSE;
-	CEdit* edit = NULL;
-	if (pMsg->message == WM_CHAR || (pMsg->message == WM_KEYDOWN && pMsg->wParam == VK_ESCAPE)) {
-		CComboBox *combobox= (CComboBox*)GetDlgItem(IDC_NUMBER);
-		edit = (CEdit*)FindWindowEx(combobox->m_hWnd,NULL,_T("EDIT"),NULL);
-		isEdit = !edit || edit == GetFocus();
+	if (mainDlg && IsWindow(mainDlg->m_hWnd)) {
+		mainDlg->PostMessage(UM_IVR_AUDIO_DONE, 0, 0);
 	}
-	if (pMsg->message == WM_CHAR)
-	{
-		if (pMsg->wParam == 48)
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_0));
-				OnBnClickedKey0();
-				catched = TRUE;
-			} else {
-				DTMF(_T("0"));
-			}
-		} else if (pMsg->wParam == 49)
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_1));
-				OnBnClickedKey1();
-				catched = TRUE;
-			} else {
-				DTMF(_T("1"));
-			}
-		} else if (pMsg->wParam == 50)
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_2));
-				OnBnClickedKey2();
-				catched = TRUE;
-			} else {
-				DTMF(_T("2"));
-			}
-		} else if (pMsg->wParam == 51)
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_3));
-				OnBnClickedKey3();
-				catched = TRUE;
-			} else {
-				DTMF(_T("3"));
-			}
-		} else if (pMsg->wParam == 52)
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_4));
-				OnBnClickedKey4();
-				catched = TRUE;
-			} else {
-				DTMF(_T("4"));
-			}
-		} else if (pMsg->wParam == 53)
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_5));
-				OnBnClickedKey5();
-				catched = TRUE;
-			} else {
-				DTMF(_T("5"));
-			}
-		} else if (pMsg->wParam == 54)
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_6));
-				OnBnClickedKey6();
-				catched = TRUE;
-			} else {
-				DTMF(_T("6"));
-			}
-		} else if (pMsg->wParam == 55)
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_7));
-				OnBnClickedKey7();
-				catched = TRUE;
-			} else {
-				DTMF(_T("7"));
-			}
-		} else if (pMsg->wParam == 56)
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_8));
-				OnBnClickedKey8();
-				catched = TRUE;
-			} else {
-				DTMF(_T("8"));
-			}
-		} else if (pMsg->wParam == 57)
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_9));
-				OnBnClickedKey9();
-				catched = TRUE;
-			} else {
-				DTMF(_T("9"));
-			}
-		} else if (pMsg->wParam == 35 || pMsg->wParam == 47 )
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_GRATE));
-				OnBnClickedKeyGrate();
-				catched = TRUE;
-			} else {
-				DTMF(_T("#"));
-			}
-		} else if (pMsg->wParam == 42 )
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_STAR));
-				OnBnClickedKeyStar();
-				catched = TRUE;
-			} else {
-				DTMF(_T("*"));
-			}
-		} else if (pMsg->wParam == 43 )
-		{
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_KEY_PLUS));
-				OnBnClickedKeyPlus();
-				catched = TRUE;
-			}
-		} else if (pMsg->wParam == 8 || pMsg->wParam == 45 )
-		{
-			if (!isEdit)
-			{
-				GotoDlgCtrl(GetDlgItem(IDC_DELETE));
-				OnBnClickedDelete();
-				catched = TRUE;
-			}
-		} else if (pMsg->wParam == 46 )
-		{
-			if (!isEdit)
-			{
-				Input(_T("."), TRUE);
-				catched = TRUE;
-			}
+	// Retourner autre chose que PJ_SUCCESS pour que PJSIP ne reboucle pas le fichier
+	return -1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+IVRSession::IVRSession()
+	: m_state(IVRState::IDLE)
+	, m_callId(PJSUA_INVALID_ID)
+	, m_stepIndex(0)
+	, m_playerId(PJSUA_INVALID_ID)
+	, m_panelHost("localhost")
+	, m_panelPort(3000)
+	, m_panelPath("/api/ivr-event")
+{
+}
+
+IVRSession::~IVRSession()
+{
+	StopPlayer();
+}
+
+void IVRSession::Start(const IVRProfile& profile, pjsua_call_id callId)
+{
+	if (callId == PJSUA_INVALID_ID) return;
+	if (pjsua_get_state() != PJSUA_STATE_RUNNING) return;
+
+	// Vérifie que l'appel est bien confirmé
+	pjsua_call_info ci;
+	if (pjsua_call_get_info(callId, &ci) != PJ_SUCCESS) return;
+	if (ci.state != PJSIP_INV_STATE_CONFIRMED) return;
+
+	StopPlayer();
+	m_profile = profile;
+	m_callId = callId;
+	m_stepIndex = 0;
+	m_currentDigits.clear();
+	m_results.clear();
+
+	std::string payload = "{\"callId\":" + std::to_string((int)callId) +
+		",\"profile\":\"" + JsonEscape(profile.id) +
+		"\",\"label\":\"" + JsonEscape(profile.label) +
+		"\",\"totalSteps\":" + std::to_string(profile.steps.size()) + "}";
+	SendEvent("ivr_started", payload);
+
+	PlayCurrentStep();
+}
+
+void IVRSession::Stop()
+{
+	StopPlayer();
+	m_currentDigits.clear();
+	m_stepIndex = 0;
+	m_results.clear();
+	m_callId = PJSUA_INVALID_ID;
+	TransitionTo(IVRState::IDLE);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DTMF reçu
+// ─────────────────────────────────────────────────────────────────────────────
+void IVRSession::OnDTMF(char digit)
+{
+	if (m_state != IVRState::COLLECTING && m_state != IVRState::PLAYING) return;
+	if (m_stepIndex >= (int)m_profile.steps.size()) return;
+
+	const IVRStep& step = m_profile.steps[m_stepIndex];
+
+	// '*' = recommence le step en cours
+	if (digit == '*') {
+		ResetCurrentStep();
+		std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+			",\"stepId\":\"" + JsonEscape(step.id) +
+			"\",\"stepIndex\":" + std::to_string(m_stepIndex) + "}";
+		SendEvent("step_reset", payload);
+		PlayCurrentStep();
+		return;
+	}
+
+	// '#' = valide le step
+	if (digit == '#') {
+		if (step.minDigits > 0 && (int)m_currentDigits.size() < step.minDigits) {
+			// pas assez de chiffres, on ignore le #
+			SendEvent("dtmf_ignored",
+				"{\"callId\":" + std::to_string((int)m_callId) +
+				",\"reason\":\"min_digits\"}");
+			return;
 		}
-	} else if (pMsg->message == WM_KEYDOWN) {
-		if (pMsg->wParam == VK_ESCAPE) {
-			if (!isEdit) {
-				GotoDlgCtrl(GetDlgItem(IDC_NUMBER)); 
-				catched = TRUE;
-			}
-			CString str;
-			edit->GetWindowText(str);
-			if (!str.IsEmpty()) {
-				Clear();
-				catched = TRUE;
+		if (m_currentDigits.empty()) return;
+
+		m_results[step.id] = m_currentDigits;
+		std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+			",\"stepId\":\"" + JsonEscape(step.id) +
+			"\",\"stepLabel\":\"" + JsonEscape(step.label) +
+			"\",\"value\":\"" + JsonEscape(m_currentDigits) +
+			"\",\"stepIndex\":" + std::to_string(m_stepIndex) +
+			",\"results\":" + ResultsToJSON() + "}";
+		SendEvent("step_validated", payload);
+
+		AdvanceToNextStep();
+		return;
+	}
+
+	// Chiffre 0-9 (et A-D au cas où)
+	if (digit < '0' || digit > '9') return;
+
+	// Si on tape pendant la lecture, on coupe l'audio et on passe en collecte
+	if (m_state == IVRState::PLAYING) {
+		StopPlayer();
+		TransitionTo(IVRState::COLLECTING);
+	}
+
+	m_currentDigits += digit;
+
+	std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+		",\"stepId\":\"" + JsonEscape(step.id) +
+		"\",\"digit\":\"" + std::string(1, digit) +
+		"\",\"collected\":\"" + JsonEscape(m_currentDigits) +
+		"\",\"stepIndex\":" + std::to_string(m_stepIndex) + "}";
+	SendEvent("dtmf_digit", payload);
+
+	// Auto-validation si maxDigits atteint
+	if (step.maxDigits > 0 && (int)m_currentDigits.size() >= step.maxDigits) {
+		m_results[step.id] = m_currentDigits;
+		std::string vpayload = "{\"callId\":" + std::to_string((int)m_callId) +
+			",\"stepId\":\"" + JsonEscape(step.id) +
+			"\",\"stepLabel\":\"" + JsonEscape(step.label) +
+			"\",\"value\":\"" + JsonEscape(m_currentDigits) +
+			"\",\"stepIndex\":" + std::to_string(m_stepIndex) +
+			",\"auto\":true,\"results\":" + ResultsToJSON() + "}";
+		SendEvent("step_validated", vpayload);
+		AdvanceToNextStep();
+	}
+}
+
+// Demande de jouer le step suivant (reçu via le message loop, thread UI)
+void IVRSession::OnNextStep()
+{
+	PlayCurrentStep();
+}
+
+// Fin de lecture d'un WAV (posté depuis le callback EOF, exécuté sur thread UI)
+void IVRSession::OnAudioDone()
+{
+	if (m_state == IVRState::PLAYING) {
+		StopPlayer();
+		TransitionTo(IVRState::COLLECTING);
+		if (m_stepIndex < (int)m_profile.steps.size()) {
+			const IVRStep& step = m_profile.steps[m_stepIndex];
+			std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+				",\"stepId\":\"" + JsonEscape(step.id) +
+				"\",\"stepIndex\":" + std::to_string(m_stepIndex) + "}";
+			SendEvent("audio_done", payload);
+		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Private
+// ─────────────────────────────────────────────────────────────────────────────
+void IVRSession::PlayCurrentStep()
+{
+	if (m_stepIndex >= (int)m_profile.steps.size()) {
+		FinalizeAndHold();
+		return;
+	}
+	const IVRStep& step = m_profile.steps[m_stepIndex];
+	m_currentDigits.clear();
+
+	std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+		",\"stepId\":\"" + JsonEscape(step.id) +
+		"\",\"stepLabel\":\"" + JsonEscape(step.label) +
+		"\",\"stepIndex\":" + std::to_string(m_stepIndex) +
+		",\"totalSteps\":" + std::to_string(m_profile.steps.size()) + "}";
+	SendEvent("step_started", payload);
+
+	TransitionTo(IVRState::PLAYING);
+
+	if (!PlayWavInCall(step.audioFile)) {
+		// Si le WAV ne peut pas jouer, on passe direct en collecte
+		TransitionTo(IVRState::COLLECTING);
+	}
+}
+
+void IVRSession::AdvanceToNextStep()
+{
+	m_stepIndex++;
+	m_currentDigits.clear();
+	if (m_stepIndex >= (int)m_profile.steps.size()) {
+		FinalizeAndHold();
+	}
+	else {
+		// Petit délai naturel avant le prochain message via le message loop
+		if (mainDlg && IsWindow(mainDlg->m_hWnd)) {
+			mainDlg->PostMessage(UM_IVR_NEXT_STEP, 0, 0);
+		}
+		else {
+			PlayCurrentStep();
+		}
+	}
+}
+
+void IVRSession::ResetCurrentStep()
+{
+	m_currentDigits.clear();
+	StopPlayer();
+}
+
+void IVRSession::FinalizeAndHold()
+{
+	std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
+		",\"profile\":\"" + JsonEscape(m_profile.id) +
+		"\",\"results\":" + ResultsToJSON() + "}";
+	SendEvent("sequence_complete", payload);
+
+	StopPlayer();
+
+	// Hold via PJSIP directement (comme MessagesDlg::OnBnClickedHold).
+	// pjsua_call_set_hold déclenche on_call_media_state qui met à jour
+	// le bouton Hold automatiquement (UpdateHoldButton).
+	if (m_callId != PJSUA_INVALID_ID) {
+		pjsua_call_info ci;
+		if (pjsua_call_get_info(m_callId, &ci) == PJ_SUCCESS) {
+			if (ci.media_cnt > 0 &&
+				ci.media_status != PJSUA_CALL_MEDIA_LOCAL_HOLD &&
+				ci.media_status != PJSUA_CALL_MEDIA_NONE) {
+				pjsua_call_set_hold(m_callId, NULL);
 			}
 		}
 	}
-	if (!catched)
-	{
-		return CBaseDialog::PreTranslateMessage(pMsg);
+
+	TransitionTo(IVRState::HOLD);
+	SendEvent("call_hold",
+		"{\"callId\":" + std::to_string((int)m_callId) +
+		",\"results\":" + ResultsToJSON() + "}");
+
+	// Séquence terminée ; l'agent reprend l'appel via le bouton Hold de MicroSIP
+	m_state = IVRState::DONE;
+}
+
+// Joue un WAV dans l'appel (client) + en local (monitoring agent)
+bool IVRSession::PlayWavInCall(const std::string& wavPath)
+{
+	if (pjsua_get_state() != PJSUA_STATE_RUNNING || m_callId == PJSUA_INVALID_ID) return false;
+
+	pjsua_call_info ci;
+	if (pjsua_call_get_info(m_callId, &ci) != PJ_SUCCESS) return false;
+	if (ci.conf_slot < 0) return false;
+
+	// Convertit le chemin UTF-8 en pj_str
+	pj_str_t file = pj_str(const_cast<char*>(wavPath.c_str()));
+
+	if (pjsua_player_create(&file, PJMEDIA_FILE_NO_LOOP, &m_playerId) != PJ_SUCCESS) {
+		m_playerId = PJSUA_INVALID_ID;
+		return false;
+	}
+
+	// Branche le callback de fin
+	pjmedia_port* port = nullptr;
+	if (pjsua_player_get_port(m_playerId, &port) == PJ_SUCCESS && port) {
+		pjmedia_wav_player_set_eof_cb(port, this, &on_ivr_wav_end_callback);
+	}
+
+	pjsua_conf_port_id playerPort = pjsua_player_get_conf_port(m_playerId);
+
+	// → vers le client (dans l'appel)
+	pjsua_conf_connect(playerPort, ci.conf_slot);
+	// → vers le speaker local (monitoring agent)
+	pjsua_conf_connect(playerPort, 0);
+
+	return true;
+}
+
+void IVRSession::StopPlayer()
+{
+	if (m_playerId == PJSUA_INVALID_ID) return;
+	if (pjsua_get_state() == PJSUA_STATE_RUNNING) {
+		pjsua_conf_port_id playerPort = pjsua_player_get_conf_port(m_playerId);
+		// Déconnecte de l'appel si encore valide
+		pjsua_call_info ci;
+		if (m_callId != PJSUA_INVALID_ID &&
+			pjsua_call_get_info(m_callId, &ci) == PJ_SUCCESS && ci.conf_slot >= 0) {
+			pjsua_conf_disconnect(playerPort, ci.conf_slot);
+		}
+		pjsua_conf_disconnect(playerPort, 0);
+		pjsua_player_destroy(m_playerId);
+	}
+	m_playerId = PJSUA_INVALID_ID;
+}
+
+void IVRSession::TransitionTo(IVRState s)
+{
+	m_state = s;
+	const char* str = "UNKNOWN";
+	switch (s) {
+		case IVRState::IDLE:       str = "IDLE"; break;
+		case IVRState::PLAYING:    str = "PLAYING"; break;
+		case IVRState::COLLECTING: str = "COLLECTING"; break;
+		case IVRState::HOLD:       str = "HOLD"; break;
+		case IVRState::DONE:       str = "DONE"; break;
+	}
+	SendEvent("state_change",
+		"{\"callId\":" + std::to_string((int)m_callId) +
+		",\"state\":\"" + str + "\"}");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP non-bloquant vers le Live Panel (thread Win32 natif)
+// ─────────────────────────────────────────────────────────────────────────────
+struct IVRHttpJob {
+	std::string host;
+	int         port;
+	std::string path;
+	std::string body;
+};
+
+static unsigned __stdcall IVR_HttpThreadProc(void* arg)
+{
+	IVRHttpJob* job = static_cast<IVRHttpJob*>(arg);
+
+	std::wstring whost(job->host.begin(), job->host.end());
+	std::wstring wpath(job->path.begin(), job->path.end());
+
+	HINTERNET hSession = WinHttpOpen(L"MicroSIP-IVR/1.0",
+		WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+		WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+	if (hSession) {
+		HINTERNET hConnect = WinHttpConnect(hSession, whost.c_str(),
+			(INTERNET_PORT)job->port, 0);
+		if (hConnect) {
+			HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", wpath.c_str(),
+				NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+			if (hRequest) {
+				WinHttpAddRequestHeaders(hRequest,
+					L"Content-Type: application/json", (ULONG)-1L,
+					WINHTTP_ADDREQ_FLAG_ADD);
+				WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+					(LPVOID)job->body.c_str(), (DWORD)job->body.size(),
+					(DWORD)job->body.size(), 0);
+				WinHttpReceiveResponse(hRequest, NULL);
+				WinHttpCloseHandle(hRequest);
+			}
+			WinHttpCloseHandle(hConnect);
+		}
+		WinHttpCloseHandle(hSession);
+	}
+
+	delete job;
+	return 0;
+}
+
+void IVRSession::SendEvent(const std::string& eventType, const std::string& jsonData)
+{
+	IVRHttpJob* job = new IVRHttpJob();
+	job->host = m_panelHost;
+	job->port = m_panelPort;
+	job->path = m_panelPath;
+	job->body = "{\"event\":\"" + eventType + "\",\"data\":" + jsonData + "}";
+
+	unsigned tid = 0;
+	HANDLE h = (HANDLE)_beginthreadex(NULL, 0, &IVR_HttpThreadProc, job, 0, &tid);
+	if (h) {
+		CloseHandle(h); // on n'attend pas, fire-and-forget
 	} else {
-		return TRUE;
+		delete job; // échec de création du thread
 	}
 }
 
-void Dialer::OnBnClickedOk()
+std::string IVRSession::ResultsToJSON() const
 {
-	if (accountSettings.singleMode && GetDlgItem(IDC_END)->IsWindowVisible()) {
-		OnBnClickedEnd();
-	} else {
-		OnBnClickedCall();
+	std::string json = "{";
+	bool first = true;
+	for (const auto& kv : m_results) {
+		if (!first) json += ",";
+		json += "\"" + JsonEscape(kv.first) + "\":\"" + JsonEscape(kv.second) + "\"";
+		first = false;
 	}
+	json += "}";
+	return json;
 }
 
-void Dialer::OnBnClickedCancel()
+std::string IVRSession::JsonEscape(const std::string& s)
 {
-	mainDlg->ShowWindow(SW_HIDE);
-}
-
-void Dialer::Action(DialerActions action)
-{
-	CString number;
-	CComboBox *combobox= (CComboBox*)GetDlgItem(IDC_NUMBER);
-	combobox->GetWindowText(number);
-	if (!number.IsEmpty()) {
-		number.Trim();
-		CString numberFormated = FormatNumber(number);
-		pj_status_t pj_status = pjsua_verify_sip_url(StrToPj(numberFormated));
-		if (pj_status==PJ_SUCCESS) {
-			int pos = combobox->FindStringExact(-1,number);
-			if (pos==CB_ERR || pos>0) {
-				if (pos>0) {
-					combobox->DeleteString(pos);
-				} else if (combobox->GetCount()>=10)
-				{
-					combobox->DeleteString(combobox->GetCount()-1);
-				}
-				combobox->InsertString(0,number);
-				combobox->SetCurSel(0);
-			}
-			DialedSave(combobox);
-			if (!accountSettings.singleMode) {
-				Clear();
-			}
-			mainDlg->messagesDlg->AddTab(numberFormated, _T(""), TRUE, NULL, accountSettings.singleMode && action != ACTION_MESSAGE);
-			if (action!=ACTION_MESSAGE) {
-				mainDlg->messagesDlg->Call(action==ACTION_VIDEO_CALL);
-			}
-		} else {
-			ShowErrorMessage(pj_status);
+	std::string out;
+	for (char c : s) {
+		switch (c) {
+			case '"':  out += "\\\""; break;
+			case '\\': out += "\\\\"; break;
+			case '\n': out += "\\n"; break;
+			case '\r': out += "\\r"; break;
+			case '\t': out += "\\t"; break;
+			default:   out += c; break;
 		}
 	}
+	return out;
 }
-
-void Dialer::OnBnClickedCall()
-{
-	Action(ACTION_CALL);
-}
-
-#ifdef _GLOBAL_VIDEO
-void Dialer::OnBnClickedVideoCall()
-{
-	Action(ACTION_VIDEO_CALL);
-}
-#endif
-
-void Dialer::OnBnClickedMessage()
-{
-	Action(ACTION_MESSAGE);
-}
-
-void Dialer::OnBnClickedHold()
-{
-	mainDlg->messagesDlg->OnBnClickedHold();
-}
-
-// [IVR_ADDON] Relais vers mainDlg comme le bouton Hold
-void Dialer::OnBnClickedIvrEcole()
-{
-	mainDlg->StartIVREcole();
-}
-
-void Dialer::OnBnClickedIvrClasse()
-{
-	mainDlg->StartIVRClasse();
-}
-
-void Dialer::OnBnClickedTransfer()
-{
-	if (!mainDlg->transferDlg) {
-		mainDlg->transferDlg = new Transfer(this);
-	}
-	mainDlg->transferDlg->SetForegroundWindow();
-}
-
-void Dialer::OnBnClickedEnd()
-{
-	MessagesContact*  messagesContact = mainDlg->messagesDlg->GetMessageContact();
-	if (messagesContact && messagesContact->callId != -1 ) {
-		call_hangup_fast(messagesContact->callId);
-	} else {
-		call_hangup_all_noincoming();
-	}
-}
-
-void Dialer::DTMF(CString digits, BOOL noLocalDTMF)
-{
-	BOOL simulate = TRUE;
-	MessagesContact*  messagesContact = mainDlg->messagesDlg->GetMessageContact();
-	if (messagesContact && messagesContact->callId != -1 )
-	{
-		pjsua_call_info call_info;
-		pjsua_call_get_info(messagesContact->callId, &call_info);
-		if (call_info.media_status == PJSUA_CALL_MEDIA_ACTIVE)
-		{
-			pj_str_t pj_digits = StrToPjStr ( digits );
-			if (pjsua_call_dial_dtmf(messagesContact->callId, &pj_digits) != PJ_SUCCESS) {
-				simulate = !call_play_digit(messagesContact->callId, StrToPj(digits));
-			}
-		}
-	}
-	if (simulate && accountSettings.localDTMF && !noLocalDTMF) {
-		mainDlg->SetSoundDevice(mainDlg->audio_output);
-		call_play_digit(-1, StrToPj(digits));
-	}
-}
-
-void Dialer::Input(CString digits, BOOL disableDTMF)
-{
-	if (!disableDTMF) {
-		DTMF(digits);
-	}
-	CComboBox *combobox= (CComboBox*)GetDlgItem(IDC_NUMBER);
-	CEdit* edit = (CEdit*)FindWindowEx(combobox->m_hWnd,NULL,_T("EDIT"),NULL);
-	if (edit) {
-		int nLength = edit->GetWindowTextLength();
-		edit->SetSel(nLength,nLength);
-		edit->ReplaceSel(digits);
-	}
-}
-
-void Dialer::DialedClear()
-{
-	CComboBox *combobox= (CComboBox*)GetDlgItem(IDC_NUMBER);
-	combobox->ResetContent();
-	combobox->Clear();
-}
-void Dialer::DialedLoad()
-{
-	CComboBox *combobox= (CComboBox*)GetDlgItem(IDC_NUMBER);
-	CString key;
-	CString val;
-	LPTSTR ptr = val.GetBuffer(255);
-	int i=0;
-	while (TRUE) {
-		key.Format(_T("%d"),i);
-		if (GetPrivateProfileString(_T("Dialed"), key, NULL, ptr, 256, accountSettings.iniFile)) {
-			combobox->AddString(ptr);
-		} else {
-			break;
-		}
-		i++;
-	}
-}
-
-void Dialer::DialedSave(CComboBox *combobox)
-{
-	CString key;
-	CString val;
-	WritePrivateProfileString(_T("Dialed"), NULL, NULL, accountSettings.iniFile);
-	for (int i=0;i < combobox->GetCount();i++)
-	{
-		int n = combobox->GetLBTextLen( i );
-		combobox->GetLBText( i, val.GetBuffer(n) );
-		val.ReleaseBuffer();
-
-		key.Format(_T("%d"),i);
-		WritePrivateProfileString(_T("Dialed"), key, val, accountSettings.iniFile);
-	}
-}
-
-
-void Dialer::OnBnClickedKey1()
-{
-	Input(_T("1"));
-}
-
-void Dialer::OnBnClickedKey2()
-{
-	Input(_T("2"));
-}
-
-void Dialer::OnBnClickedKey3()
-{
-	Input(_T("3"));
-}
-
-void Dialer::OnBnClickedKey4()
-{
-	Input(_T("4"));
-}
-
-void Dialer::OnBnClickedKey5()
-{
-	Input(_T("5"));
-}
-
-void Dialer::OnBnClickedKey6()
-{
-	Input(_T("6"));
-}
-
-void Dialer::OnBnClickedKey7()
-{
-	Input(_T("7"));
-}
-
-void Dialer::OnBnClickedKey8()
-{
-	Input(_T("8"));
-}
-
-void Dialer::OnBnClickedKey9()
-{
-	Input(_T("9"));
-}
-
-void Dialer::OnBnClickedKeyStar()
-{
-	Input(_T("*"));
-}
-
-void Dialer::OnBnClickedKey0()
-{
-	Input(_T("0"));
-}
-
-void Dialer::OnBnClickedKeyGrate()
-{
-	Input(_T("#"));
-}
-
-void Dialer::OnBnClickedKeyPlus()
-{
-	Input(_T("+"), TRUE);
-}
-
-void Dialer::OnBnClickedClear()
-{
-	Clear();
-}
-
-void Dialer::Clear(bool update)
-{
-	CComboBox *combobox= (CComboBox*)GetDlgItem(IDC_NUMBER);
-	combobox->SetCurSel(-1);
-	if (update) {
-		UpdateCallButton();
-	}
-}
-
-void Dialer::OnBnClickedDelete()
-{
-	CComboBox *combobox= (CComboBox*)GetDlgItem(IDC_NUMBER);
-	CEdit* edit = (CEdit*)FindWindowEx(combobox->m_hWnd,NULL,_T("EDIT"),NULL);
-	if (edit) {
-		int nLength = edit->GetWindowTextLength();
-		edit->SetSel(nLength-1,nLength);
-		edit->ReplaceSel(_T(""));
-	}
-}
-
-void Dialer::UpdateCallButton(BOOL forse, int callsCount)
-{
-	int len;
-	if (!forse)	{
-		CComboBox *combobox= (CComboBox*)GetDlgItem(IDC_NUMBER);
-		len = combobox->GetWindowTextLength();
-	} else {
-		len = 1;
-	}
-	CButton *button = (CButton *)GetDlgItem(IDC_CALL);
-	bool state = false;
-	if (accountSettings.singleMode)	{
-		if (callsCount == -1) {
-			callsCount = call_get_count_noincoming();
-		}
-		if (callsCount) {
-			if (!GetDlgItem(IDC_END)->IsWindowVisible()) {
-				button->ShowWindow(SW_HIDE);
-#ifdef _GLOBAL_VIDEO
-				GetDlgItem(IDC_VIDEO_CALL)->ShowWindow(SW_HIDE);
-#endif
-				GetDlgItem(IDC_MESSAGE)->ShowWindow(SW_HIDE);
-				GetDlgItem(IDC_HOLD)->ShowWindow(SW_SHOW);
-				GetDlgItem(IDC_TRANSFER)->ShowWindow(SW_SHOW);
-				GetDlgItem(IDC_END)->ShowWindow(SW_SHOW);
-				GetDlgItem(IDC_IVR_ECOLE)->ShowWindow(SW_SHOW);   // [IVR_ADDON]
-				GetDlgItem(IDC_IVR_CLASSE)->ShowWindow(SW_SHOW);  // [IVR_ADDON]
-				GotoDlgCtrl(GetDlgItem(IDC_END));
-			}
-		} else {
-			if (GetDlgItem(IDC_END)->IsWindowVisible()) {
-				GetDlgItem(IDC_HOLD)->ShowWindow(SW_HIDE);
-				GetDlgItem(IDC_TRANSFER)->ShowWindow(SW_HIDE);
-				GetDlgItem(IDC_END)->ShowWindow(SW_HIDE);
-				GetDlgItem(IDC_IVR_ECOLE)->ShowWindow(SW_HIDE);   // [IVR_ADDON]
-				GetDlgItem(IDC_IVR_CLASSE)->ShowWindow(SW_HIDE);  // [IVR_ADDON]
-				button->ShowWindow(SW_SHOW);
-#ifdef _GLOBAL_VIDEO
-				GetDlgItem(IDC_VIDEO_CALL)->ShowWindow(SW_SHOW);
-#endif
-				GetDlgItem(IDC_MESSAGE)->ShowWindow(SW_SHOW);
-			}
-		}
-		state = callsCount||len?true:false;
-
-	} else {
-		state = len?true:false;
-	}
-	if (state==false && !GetFocus()) {
-		GotoDlgCtrl(GetDlgItem(IDC_NUMBER));
-	}
-	button->EnableWindow(state);
-
-#ifdef _GLOBAL_VIDEO
-				GetDlgItem(IDC_VIDEO_CALL)->EnableWindow(state);
-#endif
-				GetDlgItem(IDC_MESSAGE)->EnableWindow(state);
-}
-
-void Dialer::SetNumber(CString  number, int callsCount)
-{
-	CComboBox *combobox= (CComboBox*)GetDlgItem(IDC_NUMBER);
-	CString old;
-	combobox->GetWindowText(old);
-	if (old.IsEmpty() || number.Find(old)!=0) {
-		combobox->SetWindowText(number);
-	}
-	UpdateCallButton(0, callsCount);
-}
-
-void Dialer::OnCbnEditchangeComboAddr()
-{
-	UpdateCallButton();
-}
-
-void Dialer::OnCbnSelchangeComboAddr()
-{	
-	UpdateCallButton(TRUE);
-}
-
-void Dialer::OnLButtonUp( UINT nFlags, CPoint pt ) 
-{
-	OnRButtonUp( nFlags, pt );
-}
-
-void Dialer::OnRButtonUp( UINT nFlags, CPoint pt )
-{
-}
-
-void Dialer::OnMouseMove(UINT nFlags, CPoint pt )
-{
-}
-
-void Dialer::OnVScroll( UINT, UINT, CScrollBar* sender)
-{
-	if (pj_ready) {
-		CSliderCtrl *sliderCtrl;
-		int pos;
-		int val;
-		sliderCtrl = (CSliderCtrl *)GetDlgItem(IDC_VOLUME_OUTPUT);
-		if (!sender || sender == (CScrollBar*)sliderCtrl)  {
-			if (sender && muteOutput) {
-				CButton *button = (CButton*)GetDlgItem(IDC_BUTTON_MUTE_OUTPUT);
-				button->SetCheck(BST_UNCHECKED);
-				OnBnClickedMuteOutput();
-				return;
-			}
-			pos = muteOutput?0:200-sliderCtrl->GetPos();
-			if (pos>100 && pos<110 || pos<100 && pos>90) {
-				pos = 100;
-				sliderCtrl->SetPos(pos);
-			}
-			val = pos<=100 ? pos : 100;
-			pj_status_t status = 
-				pjsua_snd_set_setting(
-				PJMEDIA_AUD_DEV_CAP_OUTPUT_VOLUME_SETTING,
-				&val, PJ_TRUE);
-			if (status != PJ_SUCCESS) {
-				pjsua_conf_adjust_tx_level(0, (float)val/100);
-			}
-			if (!muteOutput) {
-				val = pos>100 ? 100+(pos-100)*3 : 100;
-				pjsua_call_id call_ids[PJSUA_MAX_CALLS];
-				unsigned calls_count = PJSUA_MAX_CALLS;
-				if (pjsua_enum_calls ( call_ids, &calls_count)==PJ_SUCCESS)  {
-					for (unsigned i = 0; i < calls_count; ++i) {
-						pjsua_call_info call_info;
-						pjsua_call_get_info(call_ids[i], &call_info);
-						if (call_info.media_status == PJSUA_CALL_MEDIA_ACTIVE
-							|| call_info.media_status == PJSUA_CALL_MEDIA_REMOTE_HOLD
-							) {
-								pjsua_conf_adjust_rx_level(call_info.conf_slot, (float)val/100);
-						}
-					}
-				}
-				accountSettings.volumeOutput = pos;
-				mainDlg->AccountSettingsPendingSave();
-			}
-		}
-		sliderCtrl = (CSliderCtrl *)GetDlgItem(IDC_VOLUME_INPUT);
-		if (!sender || sender == (CScrollBar*)sliderCtrl)  {
-			if (sender && muteInput) {
-				CButton *button = (CButton*)GetDlgItem(IDC_BUTTON_MUTE_INPUT);
-				button->SetCheck(BST_UNCHECKED);
-				OnBnClickedMuteInput();
-				return;
-			}
-			pos = muteInput?0:200-sliderCtrl->GetPos();
-			if (pos>100 && pos<110 || pos<100 && pos>90) {
-				pos = 100;
-				sliderCtrl->SetPos(pos);
-			}
-			pjsua_conf_adjust_rx_level(0, (pos>100?(100+pow((float)pos-100,1.4f)):(float)pos)/100);
-			if (!muteInput) {
-				accountSettings.volumeInput = pos;
-				mainDlg->AccountSettingsPendingSave();
-			}
-		}
-	}
-}
-
-void Dialer::OnBnClickedMuteOutput()
-{
-	CButton *button = (CButton*)GetDlgItem(IDC_BUTTON_MUTE_OUTPUT);
-	if (button->GetCheck() == BST_CHECKED) {
-		button->SetIcon(m_hIconMutedOutput);
-		muteOutput = TRUE;
-		OnVScroll( 0, 0, NULL);
-	} else {
-		button->SetIcon(m_hIconMuteOutput);
-		muteOutput = FALSE;
-		OnVScroll( 0, 0, NULL);
-	}
-}
-
-void Dialer::OnBnClickedMuteInput()
-{
-	CButton *button = (CButton*)GetDlgItem(IDC_BUTTON_MUTE_INPUT);
-	if (button->GetCheck() == BST_CHECKED) {
-		button->SetIcon(m_hIconMutedInput);
-		muteInput = TRUE;
-		OnVScroll( 0, 0, NULL);
-	} else {
-		button->SetIcon(m_hIconMuteInput);
-		muteInput = FALSE;
-		OnVScroll( 0, 0, NULL);
-	}
-}
-
