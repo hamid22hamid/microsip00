@@ -105,31 +105,19 @@ jobs:
         )
         Set-Content -Path "pjlib/include/pj/config_site.h" -Value $configLines
         Write-Host "Building PJSIP with MSBuild..."
-        # MSBuild est dans le PATH grace a setup-msbuild
-        if (Test-Path "pjproject.sln") {
-            Write-Host "Building using solution file..."
-            msbuild "pjproject.sln" /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v140 /m
-        } else {
-            $projects = @(
-                "pjlib/build/pjlib.vcxproj",
-                "pjlib-util/build/pjlib-util.vcxproj",
-                "pjnath/build/pjnath.vcxproj",
-                "pjmedia/build/pjmedia.vcxproj",
-                "pjsip/build/pjsip.vcxproj",
-                "pjsip/build/pjsip_simple.vcxproj",
-                "pjsip/build/pjsua_lib.vcxproj"
-            )
-            foreach ($proj in $projects) {
-                if (Test-Path $proj) {
-                    Write-Host "Building $proj..."
-                    msbuild $proj /p:Configuration=Release /p:Platform=Win32 /p:PlatformToolset=v140 /m
-                    if ($LASTEXITCODE -ne 0) {
-                        Write-Host "Warning: Build of $proj may have issues, continuing..."
-                    }
-                } else {
-                    Write-Host "Project file not found: $proj"
-                }
+        # PJSIP 2.15.1 fournit pjproject-vs14.sln (compatible VS2022, toolset v143 par defaut)
+        # On compile la cible pjsua_lib qui entraine toutes les dependances (pjlib, pjmedia, pjsip, etc.)
+        if (Test-Path "pjproject-vs14.sln") {
+            Write-Host "Building pjsua_lib target from pjproject-vs14.sln..."
+            msbuild "pjproject-vs14.sln" /t:pjsua_lib /p:Configuration=Release /p:Platform=Win32 /m
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "pjsua_lib build failed, trying full solution..."
+                msbuild "pjproject-vs14.sln" /p:Configuration=Release /p:Platform=Win32 /m
             }
+        } else {
+            Write-Host "ERROR: pjproject-vs14.sln not found!"
+            Get-ChildItem -Filter "*.sln"
+            exit 1
         }
         Write-Host "PJSIP build completed"
 
@@ -162,7 +150,7 @@ jobs:
         msbuild microsip.vcxproj `
             /p:Configuration=${{env.BUILD_CONFIGURATION}} `
             /p:Platform=${{env.BUILD_PLATFORM}} `
-            /p:PlatformToolset=v140 `
+            /p:PlatformToolset=v143 `
             /m
         if ($LASTEXITCODE -ne 0) {
             Write-Host "MicroSIP build failed with exit code $LASTEXITCODE"
