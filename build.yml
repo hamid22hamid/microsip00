@@ -1,0 +1,250 @@
+name: Build MicroSIP
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  BUILD_CONFIGURATION: Release
+  BUILD_PLATFORM: Win32
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+      with:
+        msbuild-architecture: x86
+
+    - name: Install Dependencies
+      shell: pwsh
+      run: |
+        choco install 7zip -y
+        choco install innosetup -y
+
+    - name: Setup Directory Structure
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        Set-Location ".."
+        Write-Host "Setting up directory structure..."
+        $pjPaths = @(
+            "pjlib/include/pj", "pjlib/lib",
+            "pjsip/include/pjsip", "pjsip/lib",
+            "pjmedia/include/pjmedia", "pjmedia/lib",
+            "pjnath/include/pjnath", "pjnath/lib",
+            "pjlib-util/include/pjlib-util", "pjlib-util/lib",
+            "third_party/lib",
+            "third_party/openssl/Win32/include", "third_party/openssl/Win32/lib",
+            "third_party/ipp/Win32", "third_party/opus/Win32",
+            "third_party/silk/Win32/Release", "third_party/ffmpeg/Win32",
+            "third_party/vpx/Win32", "third_party/sdl/Win32",
+            "third_party/opencore-amrnb/Win32", "third_party/vo-amrwbenc/Win32",
+            "third_party/opencore-amrwb/Win32", "third_party/hid/Win32",
+            "lib"
+        )
+        foreach ($path in $pjPaths) {
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+        }
+        Write-Host "Directory structure created"
+
+    - name: Download and Build PJSIP
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        Set-Location ".."
+        if (Test-Path "pjproject/lib/pjlib-i386-Win32-vc14-Release.lib") {
+            Write-Host "PJSIP already built, skipping..."
+            exit 0
+        }
+        Write-Host "Downloading PJSIP..."
+        $pjsipVersion = "2.15.1"
+        $pjsipUrl = "https://github.com/pjsip/pjproject/archive/refs/tags/$pjsipVersion.zip"
+        try {
+            Invoke-WebRequest -Uri $pjsipUrl -OutFile "pjproject.zip" -TimeoutSec 120
+            Expand-Archive -Path "pjproject.zip" -DestinationPath "." -Force
+            if (Test-Path "pjproject-$pjsipVersion") {
+                Remove-Item -Recurse -Force "pjproject" -ErrorAction SilentlyContinue
+                Rename-Item "pjproject-$pjsipVersion" "pjproject" -Force
+            }
+        } catch {
+            Write-Host "Failed to download PJSIP: $_"
+            exit 1
+        }
+        Set-Location "pjproject"
+        Write-Host "Configuring PJSIP..."
+        $configLines = @(
+          '#ifndef __PJ_CONFIG_SITE_H__',
+          '#define __PJ_CONFIG_SITE_H__',
+          '#define PJ_CONFIG_MICROSIP 1',
+          '#define PJMEDIA_HAS_VIDEO 1',
+          '#define PJMEDIA_HAS_FFMPEG 1',
+          '#define PJMEDIA_HAS_VPX 1',
+          '#define PJMEDIA_HAS_OPUS 1',
+          '#define PJMEDIA_HAS_SILK 1',
+          '#define PJMEDIA_HAS_G722 1',
+          '#define PJMEDIA_HAS_G7221 1',
+          '#define PJMEDIA_HAS_G726 1',
+          '#define PJMEDIA_HAS_G729 1',
+          '#define PJMEDIA_HAS_GSM 1',
+          '#define PJMEDIA_HAS_SPEEX 1',
+          '#define PJMEDIA_HAS_ILBC 1',
+          '#define PJMEDIA_HAS_SRTP 1',
+          '#define PJMEDIA_HAS_TLS 1',
+          '#define PJMEDIA_HAS_WEBRTC_AEC 1',
+          '#define PJMEDIA_HAS_WEBRTC_VAD 1',
+          '#include <pj/config_site_sample.h>',
+          '#endif'
+        )
+        Set-Content -Path "pjlib/include/pj/config_site.h" -Value $configLines
+
+        # [FIX] Forcer le toolset v143 dans les props de PJSIP (sinon il reste en v140)
+        Write-Host "Patching PJSIP toolset to v143..."
+        $propsFile = "build\vs\pjproject-vs14-common-config.props"
+        if (Test-Path $propsFile) {
+            $content = Get-Content $propsFile -Raw
+            # Remplace toute valeur de PlatformToolset par v143
+            $content = $content -replace '<PlatformToolset>[^<]*</PlatformToolset>', '<PlatformToolset>v143</PlatformToolset>'
+            Set-Content -Path $propsFile -Value $content
+            Write-Host "Patched $propsFile"
+            Write-Host "Content check:"
+            Select-String -Path $propsFile -Pattern "PlatformToolset"
+        } else {
+            Write-Host "Props file not found, will rely on command-line toolset"
+        }
+
+        Write-Host "Building PJSIP with MSBuild..."
+        # PJSIP 2.15.1 : pjproject-vs14.sln. On FORCE v143 + SDK 10 pour windows-latest.
+        if (Test-Path "pjproject-vs14.sln") {
+            Write-Host "Building pjsua_lib target (forcing v143)..."
+            msbuild "pjproject-vs14.sln" /t:pjsua_lib `
+                /p:Configuration=Release /p:Platform=Win32 `
+                /p:PlatformToolset=v143 `
+                /p:WindowsTargetPlatformVersion=10.0 `
+                /m
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "pjsua_lib failed, trying libpjproject target..."
+                msbuild "pjproject-vs14.sln" /t:libpjproject `
+                    /p:Configuration=Release /p:Platform=Win32 `
+                    /p:PlatformToolset=v143 `
+                    /p:WindowsTargetPlatformVersion=10.0 `
+                    /m
+            }
+        } else {
+            Write-Host "ERROR: pjproject-vs14.sln not found!"
+            Get-ChildItem -Filter "*.sln"
+            exit 1
+        }
+        Write-Host "PJSIP build step done"
+
+    - name: Copy PJSIP Libraries
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        Set-Location ".."
+        Write-Host "Setting up PJSIP at locations expected by microsip.vcxproj..."
+        $pjRoot = "pjproject"
+        if (-not (Test-Path $pjRoot)) {
+            Write-Host "ERROR: dossier pjproject introuvable!"
+            Get-ChildItem -Directory | ForEach-Object { Write-Host "  dir: $($_.Name)" }
+            exit 1
+        }
+        # Copier chaque module PJSIP (headers + sources) au niveau racine
+        # pour matcher les chemins ..\pjlib\include etc. du vcxproj
+        $modules = @("pjlib", "pjlib-util", "pjnath", "pjmedia", "pjsip", "third_party")
+        foreach ($m in $modules) {
+            if (Test-Path "$pjRoot\$m") {
+                Write-Host "Copying module $m..."
+                Copy-Item -Path "$pjRoot\$m" -Destination "." -Recurse -Force
+            } else {
+                Write-Host "  WARNING: $pjRoot\$m introuvable"
+            }
+        }
+        # Rassembler toutes les .lib dans lib\
+        New-Item -ItemType Directory -Force -Path "lib" | Out-Null
+        $libCount = 0
+        Get-ChildItem -Path "$pjRoot" -Filter "*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName -Destination "lib\" -Force
+            $libCount++
+        }
+        Write-Host "Total .lib copiees: $libCount"
+        Write-Host ""
+        Write-Host "=== VERIFICATION pjsua.h ==="
+        $pjsuaPath = "pjsip\include\pjsua-lib\pjsua.h"
+        if (Test-Path $pjsuaPath) {
+            Write-Host "  OK: $pjsuaPath EXISTE"
+        } else {
+            Write-Host "  MANQUANT: $pjsuaPath"
+            Write-Host "  Recherche de pjsua.h n'importe ou..."
+            Get-ChildItem -Path "." -Filter "pjsua.h" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                Write-Host "    trouve: $($_.FullName)"
+            }
+        }
+        Write-Host ""
+        Write-Host "=== Contenu de lib\ ==="
+        Get-ChildItem -Path "lib\*.lib" -ErrorAction SilentlyContinue | Select-Object -First 30 | ForEach-Object {
+            Write-Host "  $($_.Name)"
+        }
+
+    - name: Build MicroSIP
+      working-directory: ${{ github.workspace }}
+      shell: pwsh
+      run: |
+        Write-Host "Building MicroSIP..."
+        msbuild microsip.vcxproj `
+            /p:Configuration=${{env.BUILD_CONFIGURATION}} `
+            /p:Platform=${{env.BUILD_PLATFORM}} `
+            /p:PlatformToolset=v143 `
+            /m
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "MicroSIP build failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+        }
+        Write-Host "MicroSIP build completed successfully"
+
+    - name: Prepare Output
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        New-Item -ItemType Directory -Force -Path "output" | Out-Null
+        if (Test-Path "Release/microsip.exe") {
+            Copy-Item "Release/microsip.exe" -Destination "output/" -Force
+            Write-Host "Copied microsip.exe"
+        } else {
+            Write-Host "Warning: microsip.exe not found in Release/"
+            Get-ChildItem -Path "Release/" -ErrorAction SilentlyContinue
+        }
+        if (Test-Path "Release/*.dll") {
+            Copy-Item "Release/*.dll" -Destination "output/" -Force
+        }
+        Get-ChildItem -Path "output" -Recurse | ForEach-Object {
+            Write-Host "  $($_.FullName)"
+        }
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: MicroSIP-Build
+        path: ${{ github.workspace }}/output/
+
+    - name: Create Portable ZIP
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        if (Test-Path "output/microsip.exe") {
+            Compress-Archive -Path "output/*" -DestinationPath "MicroSIP-portable.zip" -Force
+            Write-Host "Created portable ZIP archive"
+        }
+
+    - name: Upload Portable Archive
+      uses: actions/upload-artifact@v4
+      with:
+        name: MicroSIP-Portable
+        path: ${{ github.workspace }}/MicroSIP-*.zip

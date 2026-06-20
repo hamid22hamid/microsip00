@@ -222,10 +222,11 @@ public:
 	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
 	afx_msg BOOL OnQueryEndSession();
 	afx_msg void OnBnClickedOk();
-	void StartIVREcole();    // [IVR_ADDON] appelé depuis Dialer
-	void StartIVRClasse();   // [IVR_ADDON] appelé depuis Dialer
-	afx_msg LRESULT onIvrAudioDone(WPARAM, LPARAM);  // [IVR_ADDON]
-	afx_msg LRESULT onIvrNextStep(WPARAM, LPARAM);   // [IVR_ADDON]
+	// [IVR_ADDON]
+	void StartIVREcole();
+	void StartIVRClasse();
+	afx_msg LRESULT onIvrAudioDone(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT onIvrNextStep(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnBnClickedMenu();
 	afx_msg void OnClose();
 	afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd *pWnd, UINT nCtlColor);

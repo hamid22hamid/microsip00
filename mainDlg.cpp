@@ -57,11 +57,8 @@
 #endif
 
 CmainDlg* mainDlg;
-
-// [IVR_ADDON] Module IVR natif (pas de DLL — PJSIP est statique dans l'exe)
+// [IVR_ADDON] Module IVR natif (PJSIP statique)
 #include "IVRSession.h"
-// UM_IVR_AUDIO_DONE et UM_IVR_NEXT_STEP sont définis dans l'enum de global.h
-// ──────────────────────────────────────────────────────────
 
 static UINT WM_SHELLHOOKMESSAGE;
 static UINT WM_TASKBARRESTARTMESSAGE;
@@ -1618,9 +1615,7 @@ CmainDlg::~CmainDlg(void)
 
 void CmainDlg::OnDestroy()
 {
-	// [IVR_ADDON]
-	IVRSession::Instance().Stop();
-
+	IVRSession::Instance().Stop(); // [IVR_ADDON]
 	if (mmNotificationClient) {
 		delete mmNotificationClient;
 	}
@@ -1653,6 +1648,8 @@ void CmainDlg::DoDataExchange(CDataExchange * pDX)
 }
 
 BEGIN_MESSAGE_MAP(CmainDlg, CBaseDialog)
+	ON_MESSAGE(UM_IVR_AUDIO_DONE, onIvrAudioDone) // [IVR_ADDON]
+	ON_MESSAGE(UM_IVR_NEXT_STEP, onIvrNextStep)   // [IVR_ADDON]
 	ON_WM_CREATE()
 	ON_WM_SYSCOMMAND()
 	ON_WM_QUERYENDSESSION()
@@ -1666,8 +1663,6 @@ BEGIN_MESSAGE_MAP(CmainDlg, CBaseDialog)
 	ON_WM_WTSSESSION_CHANGE()
 	ON_WM_DESTROY()
 	ON_BN_CLICKED(IDOK, OnBnClickedOk)
-	ON_MESSAGE(UM_IVR_AUDIO_DONE, onIvrAudioDone)         // [IVR_ADDON]
-	ON_MESSAGE(UM_IVR_NEXT_STEP, onIvrNextStep)           // [IVR_ADDON]
 	ON_BN_CLICKED(IDC_MAIN_MENU, OnBnClickedMenu)
 	ON_MESSAGE(UM_UPDATEWINDOWTEXT, OnUpdateWindowText)
 	ON_MESSAGE(UM_NOTIFYICON, onTrayNotify)
@@ -1745,43 +1740,6 @@ BOOL CmainDlg::PreTranslateMessage(MSG * pMsg)
 
 void CmainDlg::OnBnClickedOk()
 {
-}
-
-// [IVR_ADDON] Démarre la séquence "Ecole" (telephone puis poste)
-// Appelé depuis Dialer::OnBnClickedIvrEcole
-void CmainDlg::StartIVREcole()
-{
-	pjsua_call_id callId = CurrentCallId();
-	if (callId == PJSUA_INVALID_ID) {
-		MessageBox(Translate(_T("No active call.")), _T("IVR"), MB_OK | MB_ICONWARNING);
-		return;
-	}
-	IVRSession::Instance().Start(IVR_MakeProfileEcole(), callId);
-}
-
-// [IVR_ADDON] Démarre la séquence "Classe" (numero de classe)
-void CmainDlg::StartIVRClasse()
-{
-	pjsua_call_id callId = CurrentCallId();
-	if (callId == PJSUA_INVALID_ID) {
-		MessageBox(Translate(_T("No active call.")), _T("IVR"), MB_OK | MB_ICONWARNING);
-		return;
-	}
-	IVRSession::Instance().Start(IVR_MakeProfileClasse(), callId);
-}
-
-// [IVR_ADDON] Fin de lecture d'un WAV IVR (posté par le callback EOF)
-LRESULT CmainDlg::onIvrAudioDone(WPARAM wParam, LPARAM lParam)
-{
-	IVRSession::Instance().OnAudioDone();
-	return 0;
-}
-
-// [IVR_ADDON] Demande de jouer le step suivant (timing via message loop)
-LRESULT CmainDlg::onIvrNextStep(WPARAM wParam, LPARAM lParam)
-{
-	IVRSession::Instance().OnNextStep();
-	return 0;
 }
 
 void CmainDlg::OnBnClickedMenu()
@@ -1939,6 +1897,7 @@ int CmainDlg::OnCreate(LPCREATESTRUCT lpCreateStruct)
 BOOL CmainDlg::OnInitDialog()
 {
 	CBaseDialog::OnInitDialog();
+	IVRSession::Instance().SetPanelTarget("localhost", 3000, "/api/ivr-event"); // [IVR_ADDON]
 
 	WTSRegisterSessionNotification(m_hWnd, NOTIFY_FOR_THIS_SESSION);
 	mmNotificationClient = new CMMNotificationClient();
@@ -2206,9 +2165,6 @@ void CmainDlg::OnCreated()
 	if (WM_SHELLHOOKMESSAGE) {
 		RegisterShellHookWindow(m_hWnd);
 	}
-
-	// [IVR_ADDON] Configure la cible du Live Panel (backend Node.js local)
-	IVRSession::Instance().SetPanelTarget("localhost", 3000, "/api/ivr-event");
 }
 
 void CmainDlg::TrayIconUpdateTip()
@@ -4378,6 +4334,23 @@ bool CmainDlg::AutoAnswer(pjsua_call_id call_id, bool force)
 	}
 	return allow;
 }
+
+// [IVR_ADDON] Demarre sequence Ecole
+void CmainDlg::StartIVREcole()
+{
+	pjsua_call_id callId = CurrentCallId();
+	if (callId == PJSUA_INVALID_ID) { MessageBox(_T("No active call."), _T("IVR"), MB_OK|MB_ICONWARNING); return; }
+	IVRSession::Instance().Start(IVR_MakeProfileEcole(), callId);
+}
+// [IVR_ADDON] Demarre sequence Classe
+void CmainDlg::StartIVRClasse()
+{
+	pjsua_call_id callId = CurrentCallId();
+	if (callId == PJSUA_INVALID_ID) { MessageBox(_T("No active call."), _T("IVR"), MB_OK|MB_ICONWARNING); return; }
+	IVRSession::Instance().Start(IVR_MakeProfileClasse(), callId);
+}
+LRESULT CmainDlg::onIvrAudioDone(WPARAM w, LPARAM l) { IVRSession::Instance().OnAudioDone(); return 0; }
+LRESULT CmainDlg::onIvrNextStep(WPARAM w, LPARAM l) { IVRSession::Instance().OnNextStep(); return 0; }
 
 pjsua_call_id CmainDlg::CurrentCallId()
 {
