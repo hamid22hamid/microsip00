@@ -2,6 +2,7 @@
 // resources Microsoft Visual C++ does not edit directly
 //
 
+#include "IVRDefs.h" // [IVR_ADDON]
 #ifdef APSTUDIO_INVOKED
 #error this file is not editable by Microsoft Visual C++
 #endif //APSTUDIO_INVOKED

@@ -26,6 +26,7 @@
 #include "langpack.h"
 #include "Hid.h"
 #include "ButtonSafe.h"
+#include "IVRDefs.h" // [IVR_ADDON] IDs autonomes
 
 static CString digitsDTMFDelayed;
 

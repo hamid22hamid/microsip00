@@ -305,6 +305,7 @@
     <ClInclude Include="global.h" />
     <ClInclude Include="IconButton.h" />
     <ClInclude Include="IVRSession.h" />
+    <ClInclude Include="IVRDefs.h" />
     <ClInclude Include="jumplist.h" />
     <ClInclude Include="lib\CListCtrl_LabelTip.h" />
     <ClInclude Include="lib\CListCtrl_ToolTip.h" />
