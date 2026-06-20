@@ -149,19 +149,47 @@ jobs:
       run: |
         Set-Location "${{ github.workspace }}"
         Set-Location ".."
-        Write-Host "Copying PJSIP libraries..."
-        $libSource = "pjproject"
-        $libDest = "lib"
-        if (Test-Path $libSource) {
-            Get-ChildItem -Path "$libSource\lib\*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-                Copy-Item $_.FullName -Destination "$libDest/" -Force -ErrorAction SilentlyContinue
-            }
-            Get-ChildItem -Path "$libSource\third_party\lib\*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-                Copy-Item $_.FullName -Destination "$libDest/" -Force -ErrorAction SilentlyContinue
+        Write-Host "Setting up PJSIP at locations expected by microsip.vcxproj..."
+        $pjRoot = "pjproject"
+        if (-not (Test-Path $pjRoot)) {
+            Write-Host "ERROR: dossier pjproject introuvable!"
+            Get-ChildItem -Directory | ForEach-Object { Write-Host "  dir: $($_.Name)" }
+            exit 1
+        }
+        # Copier chaque module PJSIP (headers + sources) au niveau racine
+        # pour matcher les chemins ..\pjlib\include etc. du vcxproj
+        $modules = @("pjlib", "pjlib-util", "pjnath", "pjmedia", "pjsip", "third_party")
+        foreach ($m in $modules) {
+            if (Test-Path "$pjRoot\$m") {
+                Write-Host "Copying module $m..."
+                Copy-Item -Path "$pjRoot\$m" -Destination "." -Recurse -Force
+            } else {
+                Write-Host "  WARNING: $pjRoot\$m introuvable"
             }
         }
-        Write-Host "Libraries in lib/:"
-        Get-ChildItem -Path "$libDest/*.lib" -ErrorAction SilentlyContinue | ForEach-Object {
+        # Rassembler toutes les .lib dans lib\
+        New-Item -ItemType Directory -Force -Path "lib" | Out-Null
+        $libCount = 0
+        Get-ChildItem -Path "$pjRoot" -Filter "*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName -Destination "lib\" -Force
+            $libCount++
+        }
+        Write-Host "Total .lib copiees: $libCount"
+        Write-Host ""
+        Write-Host "=== VERIFICATION pjsua.h ==="
+        $pjsuaPath = "pjsip\include\pjsua-lib\pjsua.h"
+        if (Test-Path $pjsuaPath) {
+            Write-Host "  OK: $pjsuaPath EXISTE"
+        } else {
+            Write-Host "  MANQUANT: $pjsuaPath"
+            Write-Host "  Recherche de pjsua.h n'importe ou..."
+            Get-ChildItem -Path "." -Filter "pjsua.h" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                Write-Host "    trouve: $($_.FullName)"
+            }
+        }
+        Write-Host ""
+        Write-Host "=== Contenu de lib\ ==="
+        Get-ChildItem -Path "lib\*.lib" -ErrorAction SilentlyContinue | Select-Object -First 30 | ForEach-Object {
             Write-Host "  $($_.Name)"
         }
 
