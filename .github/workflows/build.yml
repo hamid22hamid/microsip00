@@ -124,30 +124,32 @@ jobs:
         # PJSIP 2.15.1 : pjproject-vs14.sln. On FORCE v143 + SDK 10 pour windows-latest.
         # MicroSIP a besoin de libpjproject (le .lib UNIFIE), donc on construit cette cible.
         if (Test-Path "pjproject-vs14.sln") {
-            # 1. Construire pjsua_lib (toutes les sous-libs)
-            Write-Host "Building pjsua_lib target (forcing v143)..."
-            msbuild "pjproject-vs14.sln" /t:pjsua_lib `
-                /p:Configuration=Release /p:Platform=Win32 `
-                /p:PlatformToolset=v143 `
-                /p:WindowsTargetPlatformVersion=10.0 `
-                /m
-            # 2. Construire libpjproject (le .lib UNIFIE dont MicroSIP a besoin au lien)
-            Write-Host "Building libpjproject target (lib unifiee)..."
+            # libpjproject agrege TOUT PJSIP (pjlib, pjmedia, pjsip, pjnath, codecs)
+            # en un seul gros .lib. C'est LA cible dont MicroSIP a besoin.
+            # On la construit SANS /m (sequentiel) pour voir clairement toute erreur.
+            Write-Host "Building libpjproject target (lib unifiee, sequentiel)..."
             msbuild "pjproject-vs14.sln" /t:libpjproject `
                 /p:Configuration=Release /p:Platform=Win32 `
                 /p:PlatformToolset=v143 `
-                /p:WindowsTargetPlatformVersion=10.0 `
-                /m
+                /p:WindowsTargetPlatformVersion=10.0
+            $pjExit = $LASTEXITCODE
+            Write-Host "libpjproject exit code: $pjExit"
+            # Aussi pjsua_lib pour etre sur d'avoir la sous-lib pjsua
+            Write-Host "Building pjsua_lib target..."
+            msbuild "pjproject-vs14.sln" /t:pjsua_lib `
+                /p:Configuration=Release /p:Platform=Win32 `
+                /p:PlatformToolset=v143 `
+                /p:WindowsTargetPlatformVersion=10.0
         } else {
             Write-Host "ERROR: pjproject-vs14.sln not found!"
             Get-ChildItem -Filter "*.sln"
             exit 1
         }
         Write-Host "PJSIP build step done"
-        # Verifier que la lib unifiee a ete produite
-        Write-Host "=== Recherche de libpjproject*.lib ==="
-        Get-ChildItem -Path "." -Filter "libpjproject*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Host "  trouve: $($_.FullName)"
+        # Lister TOUTES les .lib produites (pour diagnostic)
+        Write-Host "=== Toutes les .lib produites par PJSIP ==="
+        Get-ChildItem -Path "." -Filter "*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  $($_.Name)  [$([math]::Round($_.Length/1KB,0)) KB]"
         }
 
     - name: Copy PJSIP Libraries
@@ -181,6 +183,42 @@ jobs:
             $libCount++
         }
         Write-Host "Total .lib copiees: $libCount"
+        Write-Host ""
+
+        # === Creer la lib UNIFIEE libpjproject-i386-Win32-vc14-Release-Static.lib ===
+        # MicroSIP lie contre ce gros .lib unique. Si la cible libpjproject ne l'a
+        # pas produit, on le FABRIQUE en fusionnant toutes les sous-libs PJSIP via lib.exe.
+        $targetName = "libpjproject-i386-Win32-vc14-Release-Static.lib"
+        $existing = Get-ChildItem -Path "lib" -Filter "libpjproject*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($existing) {
+            Write-Host "Lib unifiee deja presente: $($existing.Name)"
+            if ($existing.Name -ne $targetName) {
+                Copy-Item $existing.FullName -Destination "lib\$targetName" -Force
+                Write-Host "  copiee sous le nom attendu: $targetName"
+            }
+        } else {
+            Write-Host "Lib unifiee absente -> fusion des sous-libs via lib.exe..."
+            # Trouver lib.exe (MSVC)
+            $libExe = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Filter "lib.exe" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "HostX86\\x86" } | Select-Object -First 1
+            if (-not $libExe) {
+                $libExe = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Filter "lib.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            }
+            Write-Host "lib.exe: $($libExe.FullName)"
+            # Lister toutes les sous-libs PJSIP a fusionner (exclure les *test* et la cible elle-meme)
+            $subLibs = Get-ChildItem -Path "lib" -Filter "*.lib" -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -notmatch "test" -and $_.Name -notmatch "libpjproject" } |
+                ForEach-Object { "`"$($_.FullName)`"" }
+            Write-Host "Sous-libs a fusionner: $($subLibs.Count)"
+            $outLib = (Resolve-Path "lib").Path + "\" + $targetName
+            $argList = "/OUT:`"$outLib`" " + ($subLibs -join " ")
+            $proc = Start-Process -FilePath $libExe.FullName -ArgumentList $argList -NoNewWindow -Wait -PassThru
+            if (Test-Path $outLib) {
+                Write-Host "  OK: $targetName cree ($([math]::Round((Get-Item $outLib).Length/1MB,1)) MB)"
+            } else {
+                Write-Host "  ECHEC creation lib unifiee (exit $($proc.ExitCode))"
+            }
+        }
         Write-Host ""
         Write-Host "=== VERIFICATION pjsua.h ==="
         $pjsuaPath = "pjsip\include\pjsua-lib\pjsua.h"
