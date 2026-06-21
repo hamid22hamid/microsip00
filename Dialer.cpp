@@ -437,6 +437,8 @@ BOOL Dialer::OnInitDialog()
 	AutoMove(IDC_END, 14, 85, 72, 15);
 	AutoMove(IDC_HOLD, 0, 85, 14, 15);
 	AutoMove(IDC_TRANSFER, 86, 85, 14, 15);
+	AutoMove(IDC_IVR_ECOLE, 0, 100, 0, 0);   // [IVR_ADDON] ancre bas-gauche
+	AutoMove(IDC_IVR_CLASSE, 0, 100, 0, 0);  // [IVR_ADDON] ancre bas-gauche
 
 	AutoMove(IDC_BUTTON_MUTE_OUTPUT, 0, 100, 0, 0);
 	AutoMove(IDC_BUTTON_MUTE_INPUT, 0, 100, 0, 0);
@@ -1218,6 +1220,8 @@ void Dialer::UpdateCallButton(BOOL forse, int callsCount)
 				GetDlgItem(IDC_MESSAGE)->ShowWindow(SW_HIDE);
 				GetDlgItem(IDC_HOLD)->ShowWindow(SW_SHOW);
 				GetDlgItem(IDC_TRANSFER)->ShowWindow(SW_SHOW);
+				GetDlgItem(IDC_IVR_ECOLE)->ShowWindow(SW_SHOW);   // [IVR_ADDON]
+				GetDlgItem(IDC_IVR_CLASSE)->ShowWindow(SW_SHOW);  // [IVR_ADDON]
 				m_ButtonEnd.ShowWindow(SW_SHOW);
 				GotoDlgCtrl(GetDlgItem(IDC_END));
 			}
@@ -1226,6 +1230,8 @@ void Dialer::UpdateCallButton(BOOL forse, int callsCount)
 			if (isEndVisisble) {
 				GetDlgItem(IDC_HOLD)->ShowWindow(SW_HIDE);
 				GetDlgItem(IDC_TRANSFER)->ShowWindow(SW_HIDE);
+				GetDlgItem(IDC_IVR_ECOLE)->ShowWindow(SW_HIDE);   // [IVR_ADDON]
+				GetDlgItem(IDC_IVR_CLASSE)->ShowWindow(SW_HIDE);  // [IVR_ADDON]
 				m_ButtonEnd.ShowWindow(SW_HIDE);
 
 				m_ButtonCall.ShowWindow(SW_SHOW);
