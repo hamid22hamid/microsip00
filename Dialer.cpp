@@ -1220,8 +1220,8 @@ void Dialer::UpdateCallButton(BOOL forse, int callsCount)
 				GetDlgItem(IDC_MESSAGE)->ShowWindow(SW_HIDE);
 				GetDlgItem(IDC_HOLD)->ShowWindow(SW_SHOW);
 				GetDlgItem(IDC_TRANSFER)->ShowWindow(SW_SHOW);
-				GetDlgItem(IDC_IVR_ECOLE)->ShowWindow(SW_SHOW);   // [IVR_ADDON]
-				GetDlgItem(IDC_IVR_CLASSE)->ShowWindow(SW_SHOW);  // [IVR_ADDON]
+				{ CWnd* pIvr1 = GetDlgItem(IDC_IVR_ECOLE); if (pIvr1) pIvr1->ShowWindow(SW_SHOW); }   // [IVR_ADDON]
+				{ CWnd* pIvr2 = GetDlgItem(IDC_IVR_CLASSE); if (pIvr2) pIvr2->ShowWindow(SW_SHOW); }  // [IVR_ADDON]
 				m_ButtonEnd.ShowWindow(SW_SHOW);
 				GotoDlgCtrl(GetDlgItem(IDC_END));
 			}
@@ -1230,8 +1230,8 @@ void Dialer::UpdateCallButton(BOOL forse, int callsCount)
 			if (isEndVisisble) {
 				GetDlgItem(IDC_HOLD)->ShowWindow(SW_HIDE);
 				GetDlgItem(IDC_TRANSFER)->ShowWindow(SW_HIDE);
-				GetDlgItem(IDC_IVR_ECOLE)->ShowWindow(SW_HIDE);   // [IVR_ADDON]
-				GetDlgItem(IDC_IVR_CLASSE)->ShowWindow(SW_HIDE);  // [IVR_ADDON]
+				{ CWnd* pIvr1 = GetDlgItem(IDC_IVR_ECOLE); if (pIvr1) pIvr1->ShowWindow(SW_HIDE); }   // [IVR_ADDON]
+				{ CWnd* pIvr2 = GetDlgItem(IDC_IVR_CLASSE); if (pIvr2) pIvr2->ShowWindow(SW_HIDE); }  // [IVR_ADDON]
 				m_ButtonEnd.ShowWindow(SW_HIDE);
 
 				m_ButtonCall.ShowWindow(SW_SHOW);
