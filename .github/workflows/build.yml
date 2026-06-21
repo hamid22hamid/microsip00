@@ -84,7 +84,7 @@ jobs:
           '#ifndef __PJ_CONFIG_SITE_H__',
           '#define __PJ_CONFIG_SITE_H__',
           '#define PJ_CONFIG_MICROSIP 1',
-          '#define PJMEDIA_HAS_VIDEO 0',
+          '#define PJMEDIA_HAS_VIDEO 1',
           '#define PJMEDIA_HAS_FFMPEG 0',
           '#define PJMEDIA_HAS_VPX 0',
           '#define PJMEDIA_HAS_OPUS 0',
@@ -120,6 +120,27 @@ jobs:
             Write-Host "Props file not found, will rely on command-line toolset"
         }
 
+        # [FIX RUNTIME] MicroSIP est compile en /MT (MultiThreaded statique).
+        # PJSIP par defaut est en /MD. Il FAUT que les deux matchent, sinon
+        # erreurs de lien (__imp___stricmp, __except_handler4_common).
+        # On patche les props PJSIP pour forcer RuntimeLibrary = MultiThreaded (/MT).
+        Write-Host "Patching PJSIP runtime to /MT (MultiThreaded)..."
+        $rtFiles = @(
+            "build\vs\pjproject-vs14-common-defaults.props",
+            "build\vs\pjproject-vs14-common-config.props",
+            "build\vs\pjproject-vs14-release-defaults.props"
+        )
+        foreach ($rf in $rtFiles) {
+            if (Test-Path $rf) {
+                $rc = Get-Content $rf -Raw
+                # MultiThreadedDLL -> MultiThreaded (release) ; DebugDLL -> Debug
+                $rc = $rc -replace '<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreaded</RuntimeLibrary>'
+                $rc = $rc -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>'
+                Set-Content -Path $rf -Value $rc
+                Write-Host "  patched runtime in $rf"
+            }
+        }
+
         Write-Host "Building PJSIP with MSBuild..."
         # PJSIP 2.15.1 : pjproject-vs14.sln. On FORCE v143 + SDK 10 pour windows-latest.
         # MicroSIP a besoin de libpjproject (le .lib UNIFIE), donc on construit cette cible.
@@ -131,7 +152,8 @@ jobs:
             msbuild "pjproject-vs14.sln" /t:libpjproject `
                 /p:Configuration=Release /p:Platform=Win32 `
                 /p:PlatformToolset=v143 `
-                /p:WindowsTargetPlatformVersion=10.0
+                /p:WindowsTargetPlatformVersion=10.0 `
+                /p:RuntimeLibrary=MultiThreaded
             $pjExit = $LASTEXITCODE
             Write-Host "libpjproject exit code: $pjExit"
             # Aussi pjsua_lib pour etre sur d'avoir la sous-lib pjsua
@@ -139,7 +161,8 @@ jobs:
             msbuild "pjproject-vs14.sln" /t:pjsua_lib `
                 /p:Configuration=Release /p:Platform=Win32 `
                 /p:PlatformToolset=v143 `
-                /p:WindowsTargetPlatformVersion=10.0
+                /p:WindowsTargetPlatformVersion=10.0 `
+                /p:RuntimeLibrary=MultiThreaded
         } else {
             Write-Host "ERROR: pjproject-vs14.sln not found!"
             Get-ChildItem -Filter "*.sln"
