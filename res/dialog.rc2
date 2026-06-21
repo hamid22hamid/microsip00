@@ -2,6 +2,7 @@
 // resources Microsoft Visual C++ does not edit directly
 //
 
+#include "IVRDefs.h" // [IVR_ADDON]
 #ifdef APSTUDIO_INVOKED
 #error this file is not editable by Microsoft Visual C++
 #endif //APSTUDIO_INVOKED
@@ -81,6 +82,10 @@ PUSHBUTTON		"Message", IDC_MESSAGE, _GLOBAL_DIALER_WIDTH - 4 - 28, IDD_DIALER_OF
 PUSHBUTTON      "End", IDC_END, 4 + 28, IDD_DIALER_OFFSET_DIALPAD, _GLOBAL_DIALER_WIDTH - 4 - 28 - 4 - 28, 23, WS_DISABLED
 CHECKBOX		"Hold", IDC_HOLD, 4, IDD_DIALER_OFFSET_DIALPAD, 28, 23, (BS_PUSHLIKE | WS_DISABLED | BS_ICON) & ~WS_VISIBLE
 PUSHBUTTON      "Call Transfer", IDC_TRANSFER, _GLOBAL_DIALER_WIDTH - 4 - 28, IDD_DIALER_OFFSET_DIALPAD, 28, 23, (WS_DISABLED | BS_ICON) & ~WS_VISIBLE
+    // [IVR_ADDON] Boutons IVR (caches par defaut, montres pendant un appel)
+    // [IVR_ADDON] Boutons IVR - VISIBLES par defaut (test diagnostic)
+    PUSHBUTTON      "IVR Ecole", IDC_IVR_ECOLE, 4, IDD_DIALER_OFFSET_SPEAKER, 34, 11
+    PUSHBUTTON      "IVR Classe", IDC_IVR_CLASSE, 40, IDD_DIALER_OFFSET_SPEAKER, 34, 11
 
 CHECKBOX    "Mute Speaker", IDC_BUTTON_MUTE_OUTPUT, 4, 1 + IDD_DIALER_OFFSET_BUTTONS, 16, 16, BS_PUSHLIKE | BS_ICON
 RTEXT           "_", IDC_BUTTON_MINUS_OUTPUT, 21, IDD_DIALER_OFFSET_BUTTONS + 1, 8, 8
