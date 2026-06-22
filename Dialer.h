@@ -82,6 +82,8 @@ public:
 	CButtonBottom m_ButtonAC;
 	CButtonBottom m_ButtonRec;
 	CButtonBottom m_ButtonConf;
+	CButtonBottom m_ButtonIvrEcole;   // [IVR_ADDON]
+	CButtonBottom m_ButtonIvrClasse;  // [IVR_ADDON]
 
 	CButtonEx m_ButtonCall;
 	//CMFCButton m_ButtonCall;
@@ -145,8 +147,7 @@ public:
 	afx_msg void OnBnClickedDND(); 
 	afx_msg void OnBnClickedFWD(); 
 	afx_msg void OnBnClickedAA();
-	afx_msg void OnBnClickedIvrEcole();  // [IVR_ADDON]
-	afx_msg void OnBnClickedIvrClasse(); // [IVR_ADDON]
+	afx_msg void OnBnClickedIvrMenu();   // [IVR_ADDON] menu popup IVR
 	afx_msg void OnBnClickedAC();
 	afx_msg void OnBnClickedConf();
 	afx_msg void OnBnClickedRec();

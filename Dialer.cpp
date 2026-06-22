@@ -437,8 +437,7 @@ BOOL Dialer::OnInitDialog()
 	AutoMove(IDC_END, 14, 85, 72, 15);
 	AutoMove(IDC_HOLD, 0, 85, 14, 15);
 	AutoMove(IDC_TRANSFER, 86, 85, 14, 15);
-	AutoMove(IDC_IVR_ECOLE, 0, 100, 0, 0);   // [IVR_ADDON] ancre bas-gauche
-	AutoMove(IDC_IVR_CLASSE, 0, 100, 0, 0);  // [IVR_ADDON] ancre bas-gauche
+	AutoMove(IDC_IVR_MENU, 0, 100, 0, 0);    // [IVR_ADDON] ancre bas-gauche
 
 	AutoMove(IDC_BUTTON_MUTE_OUTPUT, 0, 100, 0, 0);
 	AutoMove(IDC_BUTTON_MUTE_INPUT, 0, 100, 0, 0);
@@ -580,8 +579,7 @@ BEGIN_MESSAGE_MAP(Dialer, CBaseDialog)
 #endif
 	ON_BN_CLICKED(IDC_MESSAGE, OnBnClickedMessage)
 	ON_BN_CLICKED(IDC_HOLD, OnBnClickedHold)
-	ON_BN_CLICKED(IDC_IVR_ECOLE, &Dialer::OnBnClickedIvrEcole)   // [IVR_ADDON]
-	ON_BN_CLICKED(IDC_IVR_CLASSE, &Dialer::OnBnClickedIvrClasse) // [IVR_ADDON]
+	ON_BN_CLICKED(IDC_IVR_MENU, &Dialer::OnBnClickedIvrMenu)     // [IVR_ADDON]
 	ON_BN_CLICKED(IDC_TRANSFER, OnBnClickedTransfer)
 	ON_BN_CLICKED(IDC_END, OnBnClickedEnd)
 	ON_CBN_EDITCHANGE(IDC_NUMBER, &Dialer::OnCbnEditchangeComboAddr)
@@ -1220,8 +1218,7 @@ void Dialer::UpdateCallButton(BOOL forse, int callsCount)
 				GetDlgItem(IDC_MESSAGE)->ShowWindow(SW_HIDE);
 				GetDlgItem(IDC_HOLD)->ShowWindow(SW_SHOW);
 				GetDlgItem(IDC_TRANSFER)->ShowWindow(SW_SHOW);
-				{ CWnd* pIvr1 = GetDlgItem(IDC_IVR_ECOLE); if (pIvr1) pIvr1->ShowWindow(SW_SHOW); }   // [IVR_ADDON]
-				{ CWnd* pIvr2 = GetDlgItem(IDC_IVR_CLASSE); if (pIvr2) pIvr2->ShowWindow(SW_SHOW); }  // [IVR_ADDON]
+				{ CWnd* pIvr = GetDlgItem(IDC_IVR_MENU); if (pIvr) pIvr->ShowWindow(SW_SHOW); } // [IVR_ADDON]
 				m_ButtonEnd.ShowWindow(SW_SHOW);
 				GotoDlgCtrl(GetDlgItem(IDC_END));
 			}
@@ -1230,8 +1227,7 @@ void Dialer::UpdateCallButton(BOOL forse, int callsCount)
 			if (isEndVisisble) {
 				GetDlgItem(IDC_HOLD)->ShowWindow(SW_HIDE);
 				GetDlgItem(IDC_TRANSFER)->ShowWindow(SW_HIDE);
-				{ CWnd* pIvr1 = GetDlgItem(IDC_IVR_ECOLE); if (pIvr1) pIvr1->ShowWindow(SW_HIDE); }   // [IVR_ADDON]
-				{ CWnd* pIvr2 = GetDlgItem(IDC_IVR_CLASSE); if (pIvr2) pIvr2->ShowWindow(SW_HIDE); }  // [IVR_ADDON]
+				{ CWnd* pIvr = GetDlgItem(IDC_IVR_MENU); if (pIvr) pIvr->ShowWindow(SW_HIDE); } // [IVR_ADDON]
 				m_ButtonEnd.ShowWindow(SW_HIDE);
 
 				m_ButtonCall.ShowWindow(SW_SHOW);
@@ -1672,9 +1668,30 @@ void Dialer::OnBnClickedAA()
 	mainDlg->UpdateWindowText();
 	mainDlg->AccountSettingsPendingSave();
 }
-// [IVR_ADDON] relais vers mainDlg
-void Dialer::OnBnClickedIvrEcole() { mainDlg->StartIVREcole(); }
-void Dialer::OnBnClickedIvrClasse() { mainDlg->StartIVRClasse(); }
+// [IVR_ADDON] Menu popup IVR - extensible
+// Pour ajouter un item : AppendMenu + cas dans le switch
+void Dialer::OnBnClickedIvrMenu()
+{
+	CMenu menu;
+	menu.CreatePopupMenu();
+	menu.AppendMenu(MF_STRING, IVR_CMD_ECOLE,  _T("IVR Ecole"));
+	menu.AppendMenu(MF_STRING, IVR_CMD_CLASSE, _T("IVR Classe"));
+	// Futurs items : menu.AppendMenu(MF_STRING, IVR_CMD_AUTRE, _T("IVR Autre"));
+
+	// Afficher le menu juste AU-DESSUS du bouton
+	CRect rect;
+	GetDlgItem(IDC_IVR_MENU)->GetWindowRect(&rect);
+	int cmd = (int)menu.TrackPopupMenu(
+		TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_RETURNCMD | TPM_NONOTIFY,
+		rect.left, rect.top, this);
+	menu.DestroyMenu();
+
+	switch (cmd) {
+		case IVR_CMD_ECOLE:  mainDlg->StartIVREcole();  break;
+		case IVR_CMD_CLASSE: mainDlg->StartIVRClasse(); break;
+		// Futurs : case IVR_CMD_AUTRE: mainDlg->StartIVRAutre(); break;
+	}
+}
 
 void Dialer::OnBnClickedAC()
 {

@@ -1,16 +1,19 @@
 /*
- * IVRDefs.h - Identifiants des controles IVR
+ * IVRDefs.h - Bouton IVR + menu popup extensible
  *
- * Definis ici (et non dans Resource.h) pour eviter tout probleme
- * de casse de fichier (Resource.h vs resource.h) sur Git/Windows.
- * Garde par #ifndef pour ne jamais entrer en conflit si Resource.h
- * les definit aussi.
+ * Pour ajouter un nouveau bouton IVR plus tard :
+ *   1. Ajouter #define IVR_CMD_NOUVEAU 40003
+ *   2. Ajouter une ligne dans OnBnClickedIvrMenu()
+ *   3. Ajouter StartIVRNouveau() dans mainDlg.cpp
  */
 #pragma once
 
-#ifndef IDC_IVR_ECOLE
-#define IDC_IVR_ECOLE                   1205
+// Bouton unique "IVR +" dans la barre du bas
+#ifndef IDC_IVR_MENU
+#define IDC_IVR_MENU    1205
 #endif
-#ifndef IDC_IVR_CLASSE
-#define IDC_IVR_CLASSE                  1206
-#endif
+
+// Commandes du menu popup (range 40000+ = safe pour user commands MFC)
+#define IVR_CMD_ECOLE   40001
+#define IVR_CMD_CLASSE  40002
+// Futurs : #define IVR_CMD_AUTRE   40003
