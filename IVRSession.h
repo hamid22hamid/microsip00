@@ -53,7 +53,9 @@ public:
 	// Démarre une séquence sur l'appel actif
 	void Start(const IVRProfile& profile, pjsua_call_id callId);
 	void Stop();
-	void OnCallDropped(); // [FIX-1] appel coupe pendant IVR
+	void OnCallAnswered(pjsua_call_id callId); // appel decroché → panel
+	void OnCallEnded(pjsua_call_id callId);    // appel terminé normalement
+	void OnCallDropped();                      // [FIX-1] appel coupe pendant IVR
 
 	// Appelé depuis on_dtmf_digit (mainDlg.cpp)
 	void OnDTMF(char digit);

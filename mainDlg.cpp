@@ -509,6 +509,8 @@ LRESULT CmainDlg::onCallState(WPARAM wParam, LPARAM lParam)
 		if (!accountSettings.singleMode && accountSettings.AC) {
 			messagesDlg->OnMergeAll();
 		}
+		// [IVR_ADDON] Notifier le Live Panel dès que l'appel est décroché
+		IVRSession::Instance().OnCallAnswered(call_id);
 	}
 
 	if (call_info->state == PJSIP_INV_STATE_DISCONNECTED) {
@@ -516,9 +518,11 @@ LRESULT CmainDlg::onCallState(WPARAM wParam, LPARAM lParam)
 			//-- missed call
 			missed = true;
 		}
-		// [IVR_ADDON FIX-1] Stopper l'IVR si l'appel se coupe en cours de session
+		// [IVR_ADDON FIX-1] Stopper l'IVR si actif, notifier fin d'appel dans tous les cas
 		if (IVRSession::Instance().IsActive())
 			IVRSession::Instance().OnCallDropped();
+		else
+			IVRSession::Instance().OnCallEnded(call_id);
 	}
 
 	if (messagesContact) {

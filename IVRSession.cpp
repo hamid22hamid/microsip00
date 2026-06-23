@@ -20,7 +20,7 @@ extern CmainDlg* mainDlg;
 // ─── Constantes ───────────────────────────────────────────────────────────────
 static const int IVR_MAX_DIGITS      = 16;    // [FIX-7]
 static const int IVR_HTTP_TIMEOUT_MS = 2000;  // [FIX-2]
-static const int IVR_AUTO_HANGUP_SEC = 120;   // [FIX-4] 2 min
+static const int IVR_AUTO_HANGUP_SEC = 600;   // [FIX-4] 10 min
 
 // ─── Profils ──────────────────────────────────────────────────────────────────
 IVRProfile IVR_MakeProfileEcole()
@@ -30,7 +30,8 @@ IVRProfile IVR_MakeProfileEcole()
 	p.label = "Collecte Ecole";
 	p.steps = {
 		{ "telephone", "Telephone ecole", "C:\\IVR\\demande_telephone.wav", 7, 0 },
-		{ "poste",     "Poste",           "C:\\IVR\\demande_poste.wav",     0, 0 }
+		{ "poste",     "Poste",           "C:\\IVR\\demande_poste.wav",     0, 0 },
+		{ "groupe",    "Groupe",          "C:\\IVR\\demande_groupe.wav",    3, 4 }
 	};
 	return p;
 }
@@ -102,10 +103,11 @@ void IVRSession::Start(const IVRProfile& profile, pjsua_call_id callId)
 
 	StopPlayer();
 	m_profile       = profile;
+	if (m_callId != callId) m_results.clear(); // Nouveau call = reset résultats
 	m_callId        = callId;
 	m_stepIndex     = 0;
 	m_currentDigits.clear();
-	m_results.clear();
+	// m_results conservé si même appel (accumule les résultats des IVR précédents)
 
 	// Recuperer infos de l'appel pour le dashboard
 	char remBuf[256] = {};
@@ -130,6 +132,35 @@ void IVRSession::Stop()
 	m_results.clear();
 	m_callId    = PJSUA_INVALID_ID;
 	TransitionTo(IVRState::IDLE);
+}
+
+// Appel décroché (CONFIRMED) → notifier le Live Panel immédiatement
+void IVRSession::OnCallAnswered(pjsua_call_id callId)
+{
+	pjsua_call_info ci;
+	if (pjsua_call_get_info(callId, &ci) != PJ_SUCCESS) return;
+	char remBuf[256] = {};
+	pj_ansi_strncpy(remBuf, pj_strbuf(&ci.remote_info), sizeof(remBuf)-1);
+	std::string remStr(remBuf);
+	// Extraire le numéro depuis "Display <sip:NUMERO@host>"
+	std::string phone = remStr;
+	auto sipPos = remStr.find("sip:");
+	if (sipPos != std::string::npos) {
+		auto atPos = remStr.find("@", sipPos);
+		if (atPos != std::string::npos)
+			phone = remStr.substr(sipPos + 4, atPos - sipPos - 4);
+	}
+	SendEvent("call_answered",
+		"{\"callId\":"      + std::to_string((int)callId) +
+		",\"phone\":\""     + JsonEscape(phone) +
+		"\",\"remoteInfo\":\"" + JsonEscape(remStr) + "\"}");
+}
+
+// Appel terminé normalement (sans IVR actif)
+void IVRSession::OnCallEnded(pjsua_call_id callId)
+{
+	SendEvent("call_ended",
+		"{\"callId\":" + std::to_string((int)callId) + "}");
 }
 
 // ─── [FIX-1] Appel raccroche pendant IVR ─────────────────────────────────────
