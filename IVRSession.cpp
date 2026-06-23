@@ -1,5 +1,7 @@
 /*
- * IVRSession.cpp - Module IVR intégré à MicroSIP
+ * IVRSession.cpp - Module IVR integre a MicroSIP
+ * v1.1 : call drop, HTTP timeout 2s, WAV check, auto-hangup 2min,
+ *        guard double Start, min 1 digit, max 16 digits
  */
 #include "stdafx.h"
 #include "IVRSession.h"
@@ -10,19 +12,21 @@
 #include <winhttp.h>
 #pragma comment(lib, "winhttp.lib")
 
-#include <process.h>  // _beginthreadex
+#include <process.h>
+#include <sys/stat.h>
 
 extern CmainDlg* mainDlg;
 
-// UM_IVR_AUDIO_DONE et UM_IVR_NEXT_STEP sont définis dans l'enum de global.h
+// ─── Constantes ───────────────────────────────────────────────────────────────
+static const int IVR_MAX_DIGITS      = 16;    // [FIX-7]
+static const int IVR_HTTP_TIMEOUT_MS = 2000;  // [FIX-2]
+static const int IVR_AUTO_HANGUP_SEC = 120;   // [FIX-4] 2 min
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PROFILS — modifie les chemins .wav et les steps ici
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Profils ──────────────────────────────────────────────────────────────────
 IVRProfile IVR_MakeProfileEcole()
 {
 	IVRProfile p;
-	p.id = "ecole";
+	p.id    = "ecole";
 	p.label = "Collecte Ecole";
 	p.steps = {
 		{ "telephone", "Telephone ecole", "C:\\IVR\\demande_telephone.wav", 7, 0 },
@@ -34,7 +38,7 @@ IVRProfile IVR_MakeProfileEcole()
 IVRProfile IVR_MakeProfileClasse()
 {
 	IVRProfile p;
-	p.id = "classe";
+	p.id    = "classe";
 	p.label = "Collecte Classe";
 	p.steps = {
 		{ "numero_classe", "Numero de classe", "C:\\IVR\\demande_classe.wav", 1, 0 }
@@ -42,21 +46,22 @@ IVRProfile IVR_MakeProfileClasse()
 	return p;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Callback EOF PJSIP — appelé sur le thread audio quand le WAV se termine.
-// On ne fait QUE poster un message : tout le travail se fait sur le thread UI.
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── [FIX-3] Check fichier WAV ────────────────────────────────────────────────
+static bool FileExists(const std::string& path)
+{
+	struct _stat st;
+	return (_stat(path.c_str(), &st) == 0);
+}
+
+// ─── Callback EOF WAV ─────────────────────────────────────────────────────────
 pj_status_t on_ivr_wav_end_callback(pjmedia_port* port, void* usr_data)
 {
-	if (mainDlg && IsWindow(mainDlg->m_hWnd)) {
+	if (mainDlg && IsWindow(mainDlg->m_hWnd))
 		mainDlg->PostMessage(UM_IVR_AUDIO_DONE, 0, 0);
-	}
-	// Retourner autre chose que PJ_SUCCESS pour que PJSIP ne reboucle pas le fichier
 	return -1;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
+// ─── Ctor / Dtor ──────────────────────────────────────────────────────────────
 IVRSession::IVRSession()
 	: m_state(IVRState::IDLE)
 	, m_callId(PJSUA_INVALID_ID)
@@ -65,35 +70,53 @@ IVRSession::IVRSession()
 	, m_panelHost("localhost")
 	, m_panelPort(3000)
 	, m_panelPath("/api/ivr-event")
-{
-}
+{}
 
-IVRSession::~IVRSession()
-{
-	StopPlayer();
-}
+IVRSession::~IVRSession() { StopPlayer(); }
 
+// ─── Start ────────────────────────────────────────────────────────────────────
 void IVRSession::Start(const IVRProfile& profile, pjsua_call_id callId)
 {
 	if (callId == PJSUA_INVALID_ID) return;
 	if (pjsua_get_state() != PJSUA_STATE_RUNNING) return;
 
-	// Vérifie que l'appel est bien confirmé
+	// [FIX-5] Guard double Start
+	if (IsActive()) {
+		SendEvent("ivr_already_active",
+			"{\"callId\":" + std::to_string((int)callId) + "}");
+		return;
+	}
+
 	pjsua_call_info ci;
 	if (pjsua_call_get_info(callId, &ci) != PJ_SUCCESS) return;
 	if (ci.state != PJSIP_INV_STATE_CONFIRMED) return;
 
+	// [FIX-3] Warn si WAV manquant (mais continue)
+	for (const auto& step : profile.steps) {
+		if (!FileExists(step.audioFile)) {
+			SendEvent("ivr_warn_wav_missing",
+				"{\"callId\":" + std::to_string((int)callId) +
+				",\"file\":\"" + JsonEscape(step.audioFile) + "\"}");
+		}
+	}
+
 	StopPlayer();
-	m_profile = profile;
-	m_callId = callId;
-	m_stepIndex = 0;
+	m_profile       = profile;
+	m_callId        = callId;
+	m_stepIndex     = 0;
 	m_currentDigits.clear();
 	m_results.clear();
 
-	std::string payload = "{\"callId\":" + std::to_string((int)callId) +
-		",\"profile\":\"" + JsonEscape(profile.id) +
-		"\",\"label\":\"" + JsonEscape(profile.label) +
-		"\",\"totalSteps\":" + std::to_string(profile.steps.size()) + "}";
+	// Recuperer infos de l'appel pour le dashboard
+	char remBuf[256] = {};
+	pj_ansi_strncpy(remBuf, pj_strbuf(&ci.remote_info), sizeof(remBuf)-1);
+
+	std::string payload =
+		"{\"callId\":"    + std::to_string((int)callId) +
+		",\"profile\":\""  + JsonEscape(profile.id)    + "\"" +
+		",\"label\":\""    + JsonEscape(profile.label)  + "\"" +
+		",\"totalSteps\":" + std::to_string(profile.steps.size()) +
+		",\"remoteInfo\":\"" + JsonEscape(std::string(remBuf)) + "\"}";
 	SendEvent("ivr_started", payload);
 
 	PlayCurrentStep();
@@ -105,134 +128,130 @@ void IVRSession::Stop()
 	m_currentDigits.clear();
 	m_stepIndex = 0;
 	m_results.clear();
-	m_callId = PJSUA_INVALID_ID;
+	m_callId    = PJSUA_INVALID_ID;
 	TransitionTo(IVRState::IDLE);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DTMF reçu
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── [FIX-1] Appel raccroche pendant IVR ─────────────────────────────────────
+void IVRSession::OnCallDropped()
+{
+	if (!IsActive()) return;
+	SendEvent("ivr_call_dropped",
+		"{\"callId\":" + std::to_string((int)m_callId) + "}");
+	Stop();
+}
+
+// ─── DTMF ─────────────────────────────────────────────────────────────────────
 void IVRSession::OnDTMF(char digit)
 {
 	if (m_state != IVRState::COLLECTING && m_state != IVRState::PLAYING) return;
 	if (m_stepIndex >= (int)m_profile.steps.size()) return;
-
 	const IVRStep& step = m_profile.steps[m_stepIndex];
 
-	// '*' = recommence le step en cours
 	if (digit == '*') {
 		ResetCurrentStep();
-		std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
-			",\"stepId\":\"" + JsonEscape(step.id) +
-			"\",\"stepIndex\":" + std::to_string(m_stepIndex) + "}";
-		SendEvent("step_reset", payload);
+		SendEvent("step_reset",
+			"{\"callId\":"  + std::to_string((int)m_callId) +
+			",\"stepId\":\"" + JsonEscape(step.id) + "\"" +
+			",\"stepIndex\":" + std::to_string(m_stepIndex) + "}");
 		PlayCurrentStep();
 		return;
 	}
 
-	// '#' = valide le step
 	if (digit == '#') {
-		if (step.minDigits > 0 && (int)m_currentDigits.size() < step.minDigits) {
-			// pas assez de chiffres, on ignore le #
+		// [FIX-6] Minimum 1 chiffre
+		if (m_currentDigits.empty()) {
 			SendEvent("dtmf_ignored",
 				"{\"callId\":" + std::to_string((int)m_callId) +
-				",\"reason\":\"min_digits\"}");
+				",\"reason\":\"no_digits\"}");
 			return;
 		}
-		if (m_currentDigits.empty()) return;
-
+		if (step.minDigits > 0 && (int)m_currentDigits.size() < step.minDigits) {
+			SendEvent("dtmf_ignored",
+				"{\"callId\":" + std::to_string((int)m_callId) +
+				",\"reason\":\"min_digits\",\"need\":" + std::to_string(step.minDigits) +
+				",\"have\":" + std::to_string(m_currentDigits.size()) + "}");
+			return;
+		}
 		m_results[step.id] = m_currentDigits;
-		std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
-			",\"stepId\":\"" + JsonEscape(step.id) +
-			"\",\"stepLabel\":\"" + JsonEscape(step.label) +
-			"\",\"value\":\"" + JsonEscape(m_currentDigits) +
-			"\",\"stepIndex\":" + std::to_string(m_stepIndex) +
-			",\"results\":" + ResultsToJSON() + "}";
-		SendEvent("step_validated", payload);
-
+		SendEvent("step_validated",
+			"{\"callId\":"     + std::to_string((int)m_callId) +
+			",\"stepId\":\""    + JsonEscape(step.id)    + "\"" +
+			",\"stepLabel\":\"" + JsonEscape(step.label)  + "\"" +
+			",\"value\":\""     + JsonEscape(m_currentDigits) + "\"" +
+			",\"stepIndex\":"   + std::to_string(m_stepIndex) +
+			",\"results\":"     + ResultsToJSON() + "}");
 		AdvanceToNextStep();
 		return;
 	}
 
-	// Chiffre 0-9 (et A-D au cas où)
 	if (digit < '0' || digit > '9') return;
 
-	// Si on tape pendant la lecture, on coupe l'audio et on passe en collecte
+	// [FIX-7] Max 16 chiffres
+	if ((int)m_currentDigits.size() >= IVR_MAX_DIGITS) {
+		SendEvent("dtmf_ignored",
+			"{\"callId\":" + std::to_string((int)m_callId) +
+			",\"reason\":\"max_digits\"}");
+		return;
+	}
+
 	if (m_state == IVRState::PLAYING) {
 		StopPlayer();
 		TransitionTo(IVRState::COLLECTING);
 	}
 
 	m_currentDigits += digit;
+	SendEvent("dtmf_digit",
+		"{\"callId\":"   + std::to_string((int)m_callId) +
+		",\"stepId\":\""  + JsonEscape(step.id) + "\"" +
+		",\"digit\":\""   + std::string(1, digit) + "\"" +
+		",\"collected\":\"" + JsonEscape(m_currentDigits) + "\"" +
+		",\"stepIndex\":" + std::to_string(m_stepIndex) + "}");
 
-	std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
-		",\"stepId\":\"" + JsonEscape(step.id) +
-		"\",\"digit\":\"" + std::string(1, digit) +
-		"\",\"collected\":\"" + JsonEscape(m_currentDigits) +
-		"\",\"stepIndex\":" + std::to_string(m_stepIndex) + "}";
-	SendEvent("dtmf_digit", payload);
-
-	// Auto-validation si maxDigits atteint
 	if (step.maxDigits > 0 && (int)m_currentDigits.size() >= step.maxDigits) {
 		m_results[step.id] = m_currentDigits;
-		std::string vpayload = "{\"callId\":" + std::to_string((int)m_callId) +
-			",\"stepId\":\"" + JsonEscape(step.id) +
-			"\",\"stepLabel\":\"" + JsonEscape(step.label) +
-			"\",\"value\":\"" + JsonEscape(m_currentDigits) +
-			"\",\"stepIndex\":" + std::to_string(m_stepIndex) +
-			",\"auto\":true,\"results\":" + ResultsToJSON() + "}";
-		SendEvent("step_validated", vpayload);
+		SendEvent("step_validated",
+			"{\"callId\":"     + std::to_string((int)m_callId) +
+			",\"stepId\":\""    + JsonEscape(step.id)    + "\"" +
+			",\"stepLabel\":\"" + JsonEscape(step.label)  + "\"" +
+			",\"value\":\""     + JsonEscape(m_currentDigits) + "\"" +
+			",\"stepIndex\":"   + std::to_string(m_stepIndex) +
+			",\"auto\":true,\"results\":" + ResultsToJSON() + "}");
 		AdvanceToNextStep();
 	}
 }
 
-// Demande de jouer le step suivant (reçu via le message loop, thread UI)
-void IVRSession::OnNextStep()
-{
-	PlayCurrentStep();
-}
+void IVRSession::OnNextStep()  { PlayCurrentStep(); }
 
-// Fin de lecture d'un WAV (posté depuis le callback EOF, exécuté sur thread UI)
 void IVRSession::OnAudioDone()
 {
-	if (m_state == IVRState::PLAYING) {
-		StopPlayer();
-		TransitionTo(IVRState::COLLECTING);
-		if (m_stepIndex < (int)m_profile.steps.size()) {
-			const IVRStep& step = m_profile.steps[m_stepIndex];
-			std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
-				",\"stepId\":\"" + JsonEscape(step.id) +
-				"\",\"stepIndex\":" + std::to_string(m_stepIndex) + "}";
-			SendEvent("audio_done", payload);
-		}
+	if (m_state != IVRState::PLAYING) return;
+	StopPlayer();
+	TransitionTo(IVRState::COLLECTING);
+	if (m_stepIndex < (int)m_profile.steps.size()) {
+		const IVRStep& step = m_profile.steps[m_stepIndex];
+		SendEvent("audio_done",
+			"{\"callId\":"   + std::to_string((int)m_callId) +
+			",\"stepId\":\""  + JsonEscape(step.id) + "\"" +
+			",\"stepIndex\":" + std::to_string(m_stepIndex) + "}");
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Private
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Private ──────────────────────────────────────────────────────────────────
 void IVRSession::PlayCurrentStep()
 {
-	if (m_stepIndex >= (int)m_profile.steps.size()) {
-		FinalizeAndHold();
-		return;
-	}
+	if (m_stepIndex >= (int)m_profile.steps.size()) { FinalizeAndHold(); return; }
 	const IVRStep& step = m_profile.steps[m_stepIndex];
 	m_currentDigits.clear();
-
-	std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
-		",\"stepId\":\"" + JsonEscape(step.id) +
-		"\",\"stepLabel\":\"" + JsonEscape(step.label) +
-		"\",\"stepIndex\":" + std::to_string(m_stepIndex) +
-		",\"totalSteps\":" + std::to_string(m_profile.steps.size()) + "}";
-	SendEvent("step_started", payload);
-
+	SendEvent("step_started",
+		"{\"callId\":"     + std::to_string((int)m_callId) +
+		",\"stepId\":\""    + JsonEscape(step.id)    + "\"" +
+		",\"stepLabel\":\"" + JsonEscape(step.label)  + "\"" +
+		",\"stepIndex\":"   + std::to_string(m_stepIndex) +
+		",\"totalSteps\":"  + std::to_string(m_profile.steps.size()) + "}");
 	TransitionTo(IVRState::PLAYING);
-
-	if (!PlayWavInCall(step.audioFile)) {
-		// Si le WAV ne peut pas jouer, on passe direct en collecte
+	if (!PlayWavInCall(step.audioFile))
 		TransitionTo(IVRState::COLLECTING);
-	}
 }
 
 void IVRSession::AdvanceToNextStep()
@@ -241,86 +260,75 @@ void IVRSession::AdvanceToNextStep()
 	m_currentDigits.clear();
 	if (m_stepIndex >= (int)m_profile.steps.size()) {
 		FinalizeAndHold();
-	}
-	else {
-		// Petit délai naturel avant le prochain message via le message loop
-		if (mainDlg && IsWindow(mainDlg->m_hWnd)) {
+	} else {
+		if (mainDlg && IsWindow(mainDlg->m_hWnd))
 			mainDlg->PostMessage(UM_IVR_NEXT_STEP, 0, 0);
-		}
-		else {
+		else
 			PlayCurrentStep();
-		}
 	}
 }
 
-void IVRSession::ResetCurrentStep()
-{
-	m_currentDigits.clear();
-	StopPlayer();
-}
+void IVRSession::ResetCurrentStep() { m_currentDigits.clear(); StopPlayer(); }
 
 void IVRSession::FinalizeAndHold()
 {
-	std::string payload = "{\"callId\":" + std::to_string((int)m_callId) +
-		",\"profile\":\"" + JsonEscape(m_profile.id) +
-		"\",\"results\":" + ResultsToJSON() + "}";
-	SendEvent("sequence_complete", payload);
+	SendEvent("sequence_complete",
+		"{\"callId\":"  + std::to_string((int)m_callId) +
+		",\"profile\":\"" + JsonEscape(m_profile.id) + "\"" +
+		",\"results\":" + ResultsToJSON() + "}");
 
 	StopPlayer();
 
-	// Hold via PJSIP directement (comme MessagesDlg::OnBnClickedHold).
-	// pjsua_call_set_hold déclenche on_call_media_state qui met à jour
-	// le bouton Hold automatiquement (UpdateHoldButton).
 	if (m_callId != PJSUA_INVALID_ID) {
 		pjsua_call_info ci;
-		if (pjsua_call_get_info(m_callId, &ci) == PJ_SUCCESS) {
-			if (ci.media_cnt > 0 &&
-				ci.media_status != PJSUA_CALL_MEDIA_LOCAL_HOLD &&
-				ci.media_status != PJSUA_CALL_MEDIA_NONE) {
-				pjsua_call_set_hold(m_callId, NULL);
-			}
+		if (pjsua_call_get_info(m_callId, &ci) == PJ_SUCCESS &&
+			ci.media_cnt > 0 &&
+			ci.media_status != PJSUA_CALL_MEDIA_LOCAL_HOLD &&
+			ci.media_status != PJSUA_CALL_MEDIA_NONE) {
+			pjsua_call_set_hold(m_callId, NULL);
 		}
 	}
 
 	TransitionTo(IVRState::HOLD);
 	SendEvent("call_hold",
-		"{\"callId\":" + std::to_string((int)m_callId) +
+		"{\"callId\":"  + std::to_string((int)m_callId) +
 		",\"results\":" + ResultsToJSON() + "}");
 
-	// Séquence terminée ; l'agent reprend l'appel via le bouton Hold de MicroSIP
+	// [FIX-4] Auto-hangup apres 2 min si agent oublie
+	struct AHJob { pjsua_call_id cid; DWORD ms; };
+	AHJob* ahj = new AHJob{ m_callId, (DWORD)(IVR_AUTO_HANGUP_SEC * 1000) };
+	unsigned tid2 = 0;
+	HANDLE ah = (HANDLE)_beginthreadex(NULL, 0, [](void* a) -> unsigned {
+		AHJob* j = (AHJob*)a;
+		Sleep(j->ms);
+		if (pjsua_get_state() == PJSUA_STATE_RUNNING) {
+			pjsua_call_info ci2;
+			if (pjsua_call_get_info(j->cid, &ci2) == PJ_SUCCESS &&
+				ci2.media_status == PJSUA_CALL_MEDIA_LOCAL_HOLD)
+				pjsua_call_hangup(j->cid, 0, NULL, NULL);
+		}
+		delete j; return 0;
+	}, ahj, 0, &tid2);
+	if (ah) CloseHandle(ah); else delete ahj;
+
 	m_state = IVRState::DONE;
 }
 
-// Joue un WAV dans l'appel (client) + en local (monitoring agent)
 bool IVRSession::PlayWavInCall(const std::string& wavPath)
 {
 	if (pjsua_get_state() != PJSUA_STATE_RUNNING || m_callId == PJSUA_INVALID_ID) return false;
-
 	pjsua_call_info ci;
-	if (pjsua_call_get_info(m_callId, &ci) != PJ_SUCCESS) return false;
-	if (ci.conf_slot < 0) return false;
-
-	// Convertit le chemin UTF-8 en pj_str
+	if (pjsua_call_get_info(m_callId, &ci) != PJ_SUCCESS || ci.conf_slot < 0) return false;
 	pj_str_t file = pj_str(const_cast<char*>(wavPath.c_str()));
-
 	if (pjsua_player_create(&file, PJMEDIA_FILE_NO_LOOP, &m_playerId) != PJ_SUCCESS) {
-		m_playerId = PJSUA_INVALID_ID;
-		return false;
+		m_playerId = PJSUA_INVALID_ID; return false;
 	}
-
-	// Branche le callback de fin
 	pjmedia_port* port = nullptr;
-	if (pjsua_player_get_port(m_playerId, &port) == PJ_SUCCESS && port) {
+	if (pjsua_player_get_port(m_playerId, &port) == PJ_SUCCESS && port)
 		pjmedia_wav_player_set_eof_cb(port, this, &on_ivr_wav_end_callback);
-	}
-
-	pjsua_conf_port_id playerPort = pjsua_player_get_conf_port(m_playerId);
-
-	// → vers le client (dans l'appel)
-	pjsua_conf_connect(playerPort, ci.conf_slot);
-	// → vers le speaker local (monitoring agent)
-	pjsua_conf_connect(playerPort, 0);
-
+	pjsua_conf_port_id pp = pjsua_player_get_conf_port(m_playerId);
+	pjsua_conf_connect(pp, ci.conf_slot);
+	pjsua_conf_connect(pp, 0);
 	return true;
 }
 
@@ -328,14 +336,12 @@ void IVRSession::StopPlayer()
 {
 	if (m_playerId == PJSUA_INVALID_ID) return;
 	if (pjsua_get_state() == PJSUA_STATE_RUNNING) {
-		pjsua_conf_port_id playerPort = pjsua_player_get_conf_port(m_playerId);
-		// Déconnecte de l'appel si encore valide
+		pjsua_conf_port_id pp = pjsua_player_get_conf_port(m_playerId);
 		pjsua_call_info ci;
 		if (m_callId != PJSUA_INVALID_ID &&
-			pjsua_call_get_info(m_callId, &ci) == PJ_SUCCESS && ci.conf_slot >= 0) {
-			pjsua_conf_disconnect(playerPort, ci.conf_slot);
-		}
-		pjsua_conf_disconnect(playerPort, 0);
+			pjsua_call_get_info(m_callId, &ci) == PJ_SUCCESS && ci.conf_slot >= 0)
+			pjsua_conf_disconnect(pp, ci.conf_slot);
+		pjsua_conf_disconnect(pp, 0);
 		pjsua_player_destroy(m_playerId);
 	}
 	m_playerId = PJSUA_INVALID_ID;
@@ -346,104 +352,87 @@ void IVRSession::TransitionTo(IVRState s)
 	m_state = s;
 	const char* str = "UNKNOWN";
 	switch (s) {
-		case IVRState::IDLE:       str = "IDLE"; break;
-		case IVRState::PLAYING:    str = "PLAYING"; break;
+		case IVRState::IDLE:       str = "IDLE";       break;
+		case IVRState::PLAYING:    str = "PLAYING";    break;
 		case IVRState::COLLECTING: str = "COLLECTING"; break;
-		case IVRState::HOLD:       str = "HOLD"; break;
-		case IVRState::DONE:       str = "DONE"; break;
+		case IVRState::HOLD:       str = "HOLD";       break;
+		case IVRState::DONE:       str = "DONE";       break;
 	}
 	SendEvent("state_change",
 		"{\"callId\":" + std::to_string((int)m_callId) +
 		",\"state\":\"" + str + "\"}");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HTTP non-bloquant vers le Live Panel (thread Win32 natif)
-// ─────────────────────────────────────────────────────────────────────────────
-struct IVRHttpJob {
-	std::string host;
-	int         port;
-	std::string path;
-	std::string body;
-};
+// ─── HTTP fire-and-forget avec timeout 2s [FIX-2] ────────────────────────────
+struct IVRHttpJob { std::string host, path, body; int port; };
 
 static unsigned __stdcall IVR_HttpThreadProc(void* arg)
 {
-	IVRHttpJob* job = static_cast<IVRHttpJob*>(arg);
-
-	std::wstring whost(job->host.begin(), job->host.end());
-	std::wstring wpath(job->path.begin(), job->path.end());
-
-	HINTERNET hSession = WinHttpOpen(L"MicroSIP-IVR/1.0",
+	IVRHttpJob* job = (IVRHttpJob*)arg;
+	std::wstring wh(job->host.begin(), job->host.end());
+	std::wstring wp(job->path.begin(), job->path.end());
+	HINTERNET hS = WinHttpOpen(L"MicroSIP-IVR/1.0",
 		WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
 		WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-	if (hSession) {
-		HINTERNET hConnect = WinHttpConnect(hSession, whost.c_str(),
-			(INTERNET_PORT)job->port, 0);
-		if (hConnect) {
-			HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", wpath.c_str(),
+	if (hS) {
+		DWORD to = IVR_HTTP_TIMEOUT_MS;
+		WinHttpSetTimeouts(hS, to, to, to, to);
+		HINTERNET hC = WinHttpConnect(hS, wh.c_str(), (INTERNET_PORT)job->port, 0);
+		if (hC) {
+			HINTERNET hR = WinHttpOpenRequest(hC, L"POST", wp.c_str(),
 				NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
-			if (hRequest) {
-				WinHttpAddRequestHeaders(hRequest,
+			if (hR) {
+				WinHttpAddRequestHeaders(hR,
 					L"Content-Type: application/json", (ULONG)-1L,
 					WINHTTP_ADDREQ_FLAG_ADD);
-				WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+				WinHttpSendRequest(hR, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
 					(LPVOID)job->body.c_str(), (DWORD)job->body.size(),
 					(DWORD)job->body.size(), 0);
-				WinHttpReceiveResponse(hRequest, NULL);
-				WinHttpCloseHandle(hRequest);
+				WinHttpReceiveResponse(hR, NULL);
+				WinHttpCloseHandle(hR);
 			}
-			WinHttpCloseHandle(hConnect);
+			WinHttpCloseHandle(hC);
 		}
-		WinHttpCloseHandle(hSession);
+		WinHttpCloseHandle(hS);
 	}
-
-	delete job;
-	return 0;
+	delete job; return 0;
 }
 
-void IVRSession::SendEvent(const std::string& eventType, const std::string& jsonData)
+void IVRSession::SendEvent(const std::string& ev, const std::string& data)
 {
 	IVRHttpJob* job = new IVRHttpJob();
 	job->host = m_panelHost;
 	job->port = m_panelPort;
 	job->path = m_panelPath;
-	job->body = "{\"event\":\"" + eventType + "\",\"data\":" + jsonData + "}";
-
+	job->body = "{\"event\":\"" + ev + "\",\"data\":" + data + "}";
 	unsigned tid = 0;
 	HANDLE h = (HANDLE)_beginthreadex(NULL, 0, &IVR_HttpThreadProc, job, 0, &tid);
-	if (h) {
-		CloseHandle(h); // on n'attend pas, fire-and-forget
-	} else {
-		delete job; // échec de création du thread
-	}
+	if (h) CloseHandle(h); else delete job;
 }
 
 std::string IVRSession::ResultsToJSON() const
 {
-	std::string json = "{";
-	bool first = true;
+	std::string j = "{"; bool first = true;
 	for (const auto& kv : m_results) {
-		if (!first) json += ",";
-		json += "\"" + JsonEscape(kv.first) + "\":\"" + JsonEscape(kv.second) + "\"";
+		if (!first) j += ",";
+		j += "\"" + JsonEscape(kv.first) + "\":\"" + JsonEscape(kv.second) + "\"";
 		first = false;
 	}
-	json += "}";
-	return json;
+	return j + "}";
 }
 
 std::string IVRSession::JsonEscape(const std::string& s)
 {
-	std::string out;
+	std::string o;
 	for (char c : s) {
 		switch (c) {
-			case '"':  out += "\\\""; break;
-			case '\\': out += "\\\\"; break;
-			case '\n': out += "\\n"; break;
-			case '\r': out += "\\r"; break;
-			case '\t': out += "\\t"; break;
-			default:   out += c; break;
+			case '"':  o += "\\\""; break;
+			case '\\': o += "\\\\"; break;
+			case '\n': o += "\\n";  break;
+			case '\r': o += "\\r";  break;
+			case '\t': o += "\\t";  break;
+			default:   o += c;      break;
 		}
 	}
-	return out;
+	return o;
 }

@@ -516,6 +516,9 @@ LRESULT CmainDlg::onCallState(WPARAM wParam, LPARAM lParam)
 			//-- missed call
 			missed = true;
 		}
+		// [IVR_ADDON FIX-1] Stopper l'IVR si l'appel se coupe en cours de session
+		if (IVRSession::Instance().IsActive())
+			IVRSession::Instance().OnCallDropped();
 	}
 
 	if (messagesContact) {
