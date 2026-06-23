@@ -510,7 +510,7 @@ LRESULT CmainDlg::onCallState(WPARAM wParam, LPARAM lParam)
 			messagesDlg->OnMergeAll();
 		}
 		// [IVR_ADDON] Notifier le Live Panel dès que l'appel est décroché
-		IVRSession::Instance().OnCallAnswered(call_id);
+		IVRSession::Instance().OnCallAnswered(call_info->id);
 	}
 
 	if (call_info->state == PJSIP_INV_STATE_DISCONNECTED) {
@@ -522,7 +522,7 @@ LRESULT CmainDlg::onCallState(WPARAM wParam, LPARAM lParam)
 		if (IVRSession::Instance().IsActive())
 			IVRSession::Instance().OnCallDropped();
 		else
-			IVRSession::Instance().OnCallEnded(call_id);
+			IVRSession::Instance().OnCallEnded(call_info->id);
 	}
 
 	if (messagesContact) {
