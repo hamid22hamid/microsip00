@@ -1,11 +1,7 @@
 name: Build MicroSIP
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:
+  workflow_dispatch:  # Build UNIQUEMENT sur déclenchement manuel (Actions → Run workflow)
 
 env:
   BUILD_CONFIGURATION: Release
@@ -84,7 +80,7 @@ jobs:
           '#ifndef __PJ_CONFIG_SITE_H__',
           '#define __PJ_CONFIG_SITE_H__',
           '#define PJ_CONFIG_MICROSIP 1',
-          '#define PJMEDIA_HAS_VIDEO 0',
+          '#define PJMEDIA_HAS_VIDEO 1',
           '#define PJMEDIA_HAS_FFMPEG 0',
           '#define PJMEDIA_HAS_VPX 0',
           '#define PJMEDIA_HAS_OPUS 0',
@@ -120,29 +116,60 @@ jobs:
             Write-Host "Props file not found, will rely on command-line toolset"
         }
 
+        # [FIX RUNTIME] MicroSIP est compile en /MT (MultiThreaded statique).
+        # PJSIP par defaut est en /MD. Il FAUT que les deux matchent, sinon
+        # erreurs de lien (__imp___stricmp, __except_handler4_common).
+        # On patche les props PJSIP pour forcer RuntimeLibrary = MultiThreaded (/MT).
+        Write-Host "Patching PJSIP runtime to /MT (MultiThreaded)..."
+        $rtFiles = @(
+            "build\vs\pjproject-vs14-common-defaults.props",
+            "build\vs\pjproject-vs14-common-config.props",
+            "build\vs\pjproject-vs14-release-defaults.props"
+        )
+        foreach ($rf in $rtFiles) {
+            if (Test-Path $rf) {
+                $rc = Get-Content $rf -Raw
+                # MultiThreadedDLL -> MultiThreaded (release) ; DebugDLL -> Debug
+                $rc = $rc -replace '<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreaded</RuntimeLibrary>'
+                $rc = $rc -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>'
+                Set-Content -Path $rf -Value $rc
+                Write-Host "  patched runtime in $rf"
+            }
+        }
+
         Write-Host "Building PJSIP with MSBuild..."
         # PJSIP 2.15.1 : pjproject-vs14.sln. On FORCE v143 + SDK 10 pour windows-latest.
+        # MicroSIP a besoin de libpjproject (le .lib UNIFIE), donc on construit cette cible.
         if (Test-Path "pjproject-vs14.sln") {
-            Write-Host "Building pjsua_lib target (forcing v143)..."
-            msbuild "pjproject-vs14.sln" /t:pjsua_lib `
-                /p:Configuration=Release /p:Platform=Win32 `
+            # libpjproject agrege TOUT PJSIP (pjlib, pjmedia, pjsip, pjnath, codecs)
+            # en un seul gros .lib. C'est LA cible dont MicroSIP a besoin.
+            # On la construit SANS /m (sequentiel) pour voir clairement toute erreur.
+            Write-Host "Building libpjproject target (lib unifiee, sequentiel)..."
+            msbuild "pjproject-vs14.sln" /t:libpjproject `
+                /p:Configuration=Release-Static /p:Platform=Win32 `
                 /p:PlatformToolset=v143 `
                 /p:WindowsTargetPlatformVersion=10.0 `
-                /m
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "pjsua_lib failed, trying libpjproject target..."
-                msbuild "pjproject-vs14.sln" /t:libpjproject `
-                    /p:Configuration=Release /p:Platform=Win32 `
-                    /p:PlatformToolset=v143 `
-                    /p:WindowsTargetPlatformVersion=10.0 `
-                    /m
-            }
+                /p:RuntimeLibrary=MultiThreaded
+            $pjExit = $LASTEXITCODE
+            Write-Host "libpjproject exit code: $pjExit"
+            # Aussi pjsua_lib pour etre sur d'avoir la sous-lib pjsua
+            Write-Host "Building pjsua_lib target..."
+            msbuild "pjproject-vs14.sln" /t:pjsua_lib `
+                /p:Configuration=Release-Static /p:Platform=Win32 `
+                /p:PlatformToolset=v143 `
+                /p:WindowsTargetPlatformVersion=10.0 `
+                /p:RuntimeLibrary=MultiThreaded
         } else {
             Write-Host "ERROR: pjproject-vs14.sln not found!"
             Get-ChildItem -Filter "*.sln"
             exit 1
         }
         Write-Host "PJSIP build step done"
+        # Lister TOUTES les .lib produites (pour diagnostic)
+        Write-Host "=== Toutes les .lib produites par PJSIP ==="
+        Get-ChildItem -Path "." -Filter "*.lib" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "  $($_.Name)  [$([math]::Round($_.Length/1KB,0)) KB]"
+        }
 
     - name: Copy PJSIP Libraries
       shell: pwsh
@@ -175,6 +202,42 @@ jobs:
             $libCount++
         }
         Write-Host "Total .lib copiees: $libCount"
+        Write-Host ""
+
+        # === Creer la lib UNIFIEE libpjproject-i386-Win32-vc14-Release-Static.lib ===
+        # MicroSIP lie contre ce gros .lib unique. Si la cible libpjproject ne l'a
+        # pas produit, on le FABRIQUE en fusionnant toutes les sous-libs PJSIP via lib.exe.
+        $targetName = "libpjproject-i386-Win32-vc14-Release-Static.lib"
+        $existing = Get-ChildItem -Path "lib" -Filter "libpjproject*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($existing) {
+            Write-Host "Lib unifiee deja presente: $($existing.Name)"
+            if ($existing.Name -ne $targetName) {
+                Copy-Item $existing.FullName -Destination "lib\$targetName" -Force
+                Write-Host "  copiee sous le nom attendu: $targetName"
+            }
+        } else {
+            Write-Host "Lib unifiee absente -> fusion des sous-libs via lib.exe..."
+            # Trouver lib.exe (MSVC)
+            $libExe = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Filter "lib.exe" -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match "HostX86\\x86" } | Select-Object -First 1
+            if (-not $libExe) {
+                $libExe = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Filter "lib.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            }
+            Write-Host "lib.exe: $($libExe.FullName)"
+            # Lister toutes les sous-libs PJSIP a fusionner (exclure les *test* et la cible elle-meme)
+            $subLibs = Get-ChildItem -Path "lib" -Filter "*.lib" -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -notmatch "test" -and $_.Name -notmatch "libpjproject" } |
+                ForEach-Object { "`"$($_.FullName)`"" }
+            Write-Host "Sous-libs a fusionner: $($subLibs.Count)"
+            $outLib = (Resolve-Path "lib").Path + "\" + $targetName
+            $argList = "/OUT:`"$outLib`" " + ($subLibs -join " ")
+            $proc = Start-Process -FilePath $libExe.FullName -ArgumentList $argList -NoNewWindow -Wait -PassThru
+            if (Test-Path $outLib) {
+                Write-Host "  OK: $targetName cree ($([math]::Round((Get-Item $outLib).Length/1MB,1)) MB)"
+            } else {
+                Write-Host "  ECHEC creation lib unifiee (exit $($proc.ExitCode))"
+            }
+        }
         Write-Host ""
         Write-Host "=== VERIFICATION pjsua.h ==="
         $pjsuaPath = "pjsip\include\pjsua-lib\pjsua.h"
@@ -248,3 +311,151 @@ jobs:
       with:
         name: MicroSIP-Portable
         path: ${{ github.workspace }}/MicroSIP-*.zip
+
+    # ══════════════════════════════════════════════════════════
+    # INSTALLER WINDOWS — MicroSIP-IVR-Setup.exe
+    # Tout inclus : MicroSIP, Node.js, Live Panel, WAVs
+    # Les agents double-cliquent, tout est prêt.
+    # ══════════════════════════════════════════════════════════
+
+    - name: Setup Node.js 20 LTS (for npm install)
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Prepare Live Panel files
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        Write-Host "Préparation du Live Panel..."
+        New-Item -ItemType Directory -Force -Path "installer\livepanel\public" | Out-Null
+
+        # Copier les fichiers du live panel depuis le repo
+        if (Test-Path "livepanel\server.js") {
+            Copy-Item "livepanel\server.js"         "installer\livepanel\"
+            Copy-Item "livepanel\package.json"      "installer\livepanel\"
+            Copy-Item "livepanel\public\index.html" "installer\livepanel\public\"
+            Write-Host "Fichiers Live Panel copiés depuis livepanel/"
+        } else {
+            Write-Host "ERREUR: dossier livepanel/ introuvable dans le repo!"
+            Write-Host "Créez le dossier livepanel/ avec server.js, package.json, public/index.html"
+            exit 1
+        }
+
+        # Installer les dépendances npm (better-sqlite3 compile des binaires natifs)
+        Write-Host "Installation des dépendances npm (SQLite, express, ws)..."
+        Set-Location "installer\livepanel"
+        npm install --production 2>&1
+        if ($LASTEXITCODE -ne 0) { Write-Host "npm install failed"; exit 1 }
+        Write-Host "npm install OK"
+        Set-Location "${{ github.workspace }}"
+
+        # Vérifier que better-sqlite3 est bien installé
+        if (Test-Path "installer\livepanel\node_modules\better-sqlite3") {
+            Write-Host "✅ better-sqlite3 installé"
+        } else {
+            Write-Host "⚠ better-sqlite3 absent"
+        }
+
+    - name: Download Node.js 20 portable (bundle avec l'installateur)
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        Write-Host "Téléchargement de Node.js 20 LTS portable..."
+        # Doit correspondre EXACTEMENT à la version utilisée pour npm install
+        $nodeVer = "20.19.2"
+        $nodeUrl = "https://nodejs.org/dist/v$nodeVer/node-v$nodeVer-win-x64.zip"
+        Invoke-WebRequest -Uri $nodeUrl -OutFile "installer\node.zip" -TimeoutSec 120
+        Expand-Archive "installer\node.zip" -DestinationPath "installer\node_extracted" -Force
+        $extracted = Get-ChildItem "installer\node_extracted" -Directory | Select-Object -First 1
+        if ($extracted) {
+            Move-Item $extracted.FullName "installer\node" -Force
+            Write-Host "✅ Node.js portable: installer\node"
+        } else {
+            Write-Host "ERREUR: extraction Node.js échouée"
+            exit 1
+        }
+        Remove-Item "installer\node.zip" -Force
+
+    - name: Use WAV files from repo
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        Write-Host "Vérification des fichiers WAV dans installer/wav/..."
+        $required = @(
+            "installer\wav\demande_telephone.wav",
+            "installer\wav\demande_poste.wav",
+            "installer\wav\demande_classe.wav",
+            "installer\wav\demande_groupe.wav"
+        )
+        $missing = $false
+        foreach ($f in $required) {
+            if (Test-Path $f) {
+                $size = [math]::Round((Get-Item $f).Length / 1KB, 0)
+                Write-Host "  ✅ $f ($size KB)"
+            } else {
+                Write-Host "  ❌ MANQUANT: $f"
+                $missing = $true
+            }
+        }
+        if ($missing) {
+            Write-Host ""
+            Write-Host "ERREUR: Des fichiers WAV manquent dans installer/wav/"
+            Write-Host "Uploadez vos 4 fichiers WAV dans ce dossier sur GitHub."
+            Write-Host "Format requis: 16-bit, mono, 16000 Hz, PCM"
+            exit 1
+        }
+        Write-Host "Tous les WAVs sont présents ✅"
+
+    - name: Copy installer scripts
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        # Copier Lancer-IVR.vbs et setup.iss depuis le repo
+        if (Test-Path "installer\Lancer-IVR.vbs") {
+            Write-Host "Lancer-IVR.vbs présent"
+        } else {
+            Write-Host "ERREUR: installer\Lancer-IVR.vbs manquant dans le repo!"
+            exit 1
+        }
+        if (Test-Path "installer\setup.iss") {
+            Write-Host "setup.iss présent"
+        } else {
+            Write-Host "ERREUR: installer\setup.iss manquant dans le repo!"
+            exit 1
+        }
+
+    - name: Build Windows Installer
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        New-Item -ItemType Directory -Force -Path "installer\output" | Out-Null
+        Write-Host "Construction de l'installateur Windows..."
+
+        $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+        if (-not (Test-Path $iscc)) {
+            Write-Host "Inno Setup non trouvé, installation..."
+            choco install innosetup -y --no-progress
+        }
+
+        & $iscc "installer\setup.iss"
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERREUR: Inno Setup a échoué (code $LASTEXITCODE)"
+            exit 1
+        }
+
+        $installer = Get-ChildItem "installer\output\*.exe" | Select-Object -First 1
+        if ($installer) {
+            Write-Host "✅ Installateur créé: $($installer.Name) ($([math]::Round($installer.Length/1MB,1)) MB)"
+        } else {
+            Write-Host "ERREUR: fichier .exe non trouvé dans installer\output\"
+            exit 1
+        }
+
+    - name: Upload Installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: MicroSIP-IVR-Setup
+        path: ${{ github.workspace }}/installer/output/*.exe
+
