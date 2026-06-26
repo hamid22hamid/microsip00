@@ -1,11 +1,7 @@
 name: Build MicroSIP
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:
+  workflow_dispatch:  # Build UNIQUEMENT sur déclenchement manuel (Actions → Run workflow)
 
 env:
   BUILD_CONFIGURATION: Release
@@ -315,3 +311,151 @@ jobs:
       with:
         name: MicroSIP-Portable
         path: ${{ github.workspace }}/MicroSIP-*.zip
+
+    # ══════════════════════════════════════════════════════════
+    # INSTALLER WINDOWS — MicroSIP-IVR-Setup.exe
+    # Tout inclus : MicroSIP, Node.js, Live Panel, WAVs
+    # Les agents double-cliquent, tout est prêt.
+    # ══════════════════════════════════════════════════════════
+
+    - name: Setup Node.js 20 LTS (for npm install)
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Prepare Live Panel files
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        Write-Host "Préparation du Live Panel..."
+        New-Item -ItemType Directory -Force -Path "installer\livepanel\public" | Out-Null
+
+        # Copier les fichiers du live panel depuis le repo
+        if (Test-Path "livepanel\server.js") {
+            Copy-Item "livepanel\server.js"         "installer\livepanel\"
+            Copy-Item "livepanel\package.json"      "installer\livepanel\"
+            Copy-Item "livepanel\public\index.html" "installer\livepanel\public\"
+            Write-Host "Fichiers Live Panel copiés depuis livepanel/"
+        } else {
+            Write-Host "ERREUR: dossier livepanel/ introuvable dans le repo!"
+            Write-Host "Créez le dossier livepanel/ avec server.js, package.json, public/index.html"
+            exit 1
+        }
+
+        # Installer les dépendances npm (better-sqlite3 compile des binaires natifs)
+        Write-Host "Installation des dépendances npm (SQLite, express, ws)..."
+        Set-Location "installer\livepanel"
+        npm install --production 2>&1
+        if ($LASTEXITCODE -ne 0) { Write-Host "npm install failed"; exit 1 }
+        Write-Host "npm install OK"
+        Set-Location "${{ github.workspace }}"
+
+        # Vérifier que better-sqlite3 est bien installé
+        if (Test-Path "installer\livepanel\node_modules\better-sqlite3") {
+            Write-Host "✅ better-sqlite3 installé"
+        } else {
+            Write-Host "⚠ better-sqlite3 absent"
+        }
+
+    - name: Download Node.js 20 portable (bundle avec l'installateur)
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        Write-Host "Téléchargement de Node.js 20 LTS portable..."
+        # Doit correspondre EXACTEMENT à la version utilisée pour npm install
+        $nodeVer = "20.19.2"
+        $nodeUrl = "https://nodejs.org/dist/v$nodeVer/node-v$nodeVer-win-x64.zip"
+        Invoke-WebRequest -Uri $nodeUrl -OutFile "installer\node.zip" -TimeoutSec 120
+        Expand-Archive "installer\node.zip" -DestinationPath "installer\node_extracted" -Force
+        $extracted = Get-ChildItem "installer\node_extracted" -Directory | Select-Object -First 1
+        if ($extracted) {
+            Move-Item $extracted.FullName "installer\node" -Force
+            Write-Host "✅ Node.js portable: installer\node"
+        } else {
+            Write-Host "ERREUR: extraction Node.js échouée"
+            exit 1
+        }
+        Remove-Item "installer\node.zip" -Force
+
+    - name: Use WAV files from repo
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        Write-Host "Vérification des fichiers WAV dans installer/wav/..."
+        $required = @(
+            "installer\wav\demande_telephone.wav",
+            "installer\wav\demande_poste.wav",
+            "installer\wav\demande_classe.wav",
+            "installer\wav\demande_groupe.wav"
+        )
+        $missing = $false
+        foreach ($f in $required) {
+            if (Test-Path $f) {
+                $size = [math]::Round((Get-Item $f).Length / 1KB, 0)
+                Write-Host "  ✅ $f ($size KB)"
+            } else {
+                Write-Host "  ❌ MANQUANT: $f"
+                $missing = $true
+            }
+        }
+        if ($missing) {
+            Write-Host ""
+            Write-Host "ERREUR: Des fichiers WAV manquent dans installer/wav/"
+            Write-Host "Uploadez vos 4 fichiers WAV dans ce dossier sur GitHub."
+            Write-Host "Format requis: 16-bit, mono, 16000 Hz, PCM"
+            exit 1
+        }
+        Write-Host "Tous les WAVs sont présents ✅"
+
+    - name: Copy installer scripts
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        # Copier Lancer-IVR.vbs et setup.iss depuis le repo
+        if (Test-Path "installer\Lancer-IVR.vbs") {
+            Write-Host "Lancer-IVR.vbs présent"
+        } else {
+            Write-Host "ERREUR: installer\Lancer-IVR.vbs manquant dans le repo!"
+            exit 1
+        }
+        if (Test-Path "installer\setup.iss") {
+            Write-Host "setup.iss présent"
+        } else {
+            Write-Host "ERREUR: installer\setup.iss manquant dans le repo!"
+            exit 1
+        }
+
+    - name: Build Windows Installer
+      shell: pwsh
+      run: |
+        Set-Location "${{ github.workspace }}"
+        New-Item -ItemType Directory -Force -Path "installer\output" | Out-Null
+        Write-Host "Construction de l'installateur Windows..."
+
+        $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+        if (-not (Test-Path $iscc)) {
+            Write-Host "Inno Setup non trouvé, installation..."
+            choco install innosetup -y --no-progress
+        }
+
+        & $iscc "installer\setup.iss"
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERREUR: Inno Setup a échoué (code $LASTEXITCODE)"
+            exit 1
+        }
+
+        $installer = Get-ChildItem "installer\output\*.exe" | Select-Object -First 1
+        if ($installer) {
+            Write-Host "✅ Installateur créé: $($installer.Name) ($([math]::Round($installer.Length/1MB,1)) MB)"
+        } else {
+            Write-Host "ERREUR: fichier .exe non trouvé dans installer\output\"
+            exit 1
+        }
+
+    - name: Upload Installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: MicroSIP-IVR-Setup
+        path: ${{ github.workspace }}/installer/output/*.exe
+
