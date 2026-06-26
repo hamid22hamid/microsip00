@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IVR Live Panel</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh}
+.header{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;background:#161b26;border-bottom:1px solid #1e2a3a}
+.header-left{display:flex;align-items:center;gap:10px}
+.logo{font-size:1rem;font-weight:700;color:#e2e8f0}
+.dot{width:9px;height:9px;border-radius:50%;background:#ef4444;transition:background .3s}
+.dot.connected{background:#22c55e;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.ws-label{font-size:.78rem;color:#64748b}
+.ws-label.connected{color:#22c55e}
+.tabs{display:flex;padding:0 24px;background:#161b26;border-bottom:1px solid #1e2a3a}
+.tab-btn{padding:10px 20px;font-size:.85rem;font-weight:600;color:#475569;border:none;border-bottom:2px solid transparent;background:transparent;cursor:pointer;transition:all .2s}
+.tab-btn.active{color:#60a5fa;border-bottom-color:#2563eb}
+.tab-btn:hover:not(.active){color:#94a3b8}
+.tab-badge{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;background:#2563eb;color:#fff;border-radius:9px;font-size:.65rem;margin-left:6px}
+.pane{display:none}
+.pane.active{display:block}
+#calls-grid{padding:24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:20px}
+.empty-state{grid-column:1/-1;text-align:center;padding:80px 0;color:#334155}
+.empty-state .icon{font-size:3rem;margin-bottom:12px}
+.call-card{background:#161b26;border-radius:14px;border:1px solid #1e2a3a;overflow:hidden;transition:border-color .2s}
+.call-card.state-HOLD{border-color:#854d0e}
+.call-card.state-DONE{border-color:#166534;opacity:.7}
+.call-card.state-DROPPED{border-color:#7f1d1d;opacity:.6}
+.call-card.state-ACTIVE{border-color:#1e3a5f}
+.card-header{padding:16px 20px 12px;background:#1a2233;display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.phone-number{font-size:1.5rem;font-weight:700;color:#f1f5f9;letter-spacing:.5px}
+.phone-number.no-phone{color:#475569;font-size:1rem;font-style:italic}
+.call-meta{display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap}
+.call-profile-tag{font-size:.7rem;font-weight:600;background:#1e3a5f;color:#93c5fd;padding:2px 8px;border-radius:20px;text-transform:uppercase}
+.call-time{font-size:.7rem;color:#475569}
+.state-badge{flex-shrink:0;font-size:.7rem;font-weight:600;padding:4px 10px;border-radius:20px;text-transform:uppercase}
+.badge-PLAYING{background:#1e3a5f;color:#60a5fa}
+.badge-COLLECTING{background:#1a3a2a;color:#4ade80;animation:blink 1s infinite}
+.badge-HOLD{background:#3d2a00;color:#fbbf24}
+.badge-DONE{background:#14532d;color:#86efac}
+.badge-DROPPED{background:#450a0a;color:#fca5a5}
+.badge-ACTIVE{background:#1e2a3a;color:#94a3b8}
+.badge-IDLE{background:#1e2a3a;color:#64748b}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.6}}
+/* Cases d info cote a cote */
+.info-boxes{display:flex;gap:8px;padding:14px 20px;flex-wrap:wrap;border-bottom:1px solid #1e2a3a}
+.info-box{flex:1;min-width:90px;background:#0f1117;border:1px solid #1e2a3a;border-radius:10px;padding:10px 12px;text-align:center}
+.info-box.highlight{border-color:#2563eb;background:#111827}
+.info-box.done-box{border-color:#166534}
+.info-box-label{font-size:.63rem;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.info-box-value{font-size:1.2rem;font-weight:700;color:#94a3b8;font-family:'Courier New',monospace;letter-spacing:2px}
+.info-box-value.live{color:#60a5fa;animation:blink 1s infinite}
+.info-box-value.done{color:#4ade80}
+.info-box-value.empty{color:#1e2a3a;font-size:.8rem;font-family:inherit;letter-spacing:0}
+/* Progress */
+.progress-section{padding:12px 20px 10px;border-bottom:1px solid #1e2a3a}
+.progress-label{font-size:.68rem;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.progress-bar-track{height:5px;background:#1e2a3a;border-radius:3px;overflow:hidden}
+.progress-bar-fill{height:100%;background:linear-gradient(90deg,#2563eb,#7c3aed);border-radius:3px;transition:width .4s}
+.step-names{display:flex;gap:5px;margin-top:7px;flex-wrap:wrap}
+.step-chip{font-size:.68rem;padding:2px 8px;border-radius:12px;background:#1e2a3a;color:#475569;border:1px solid #1e2a3a}
+.step-chip.current{background:#1e3a5f;color:#93c5fd;border-color:#2563eb;font-weight:600}
+.step-chip.done{background:#14532d;color:#86efac;border-color:#166534}
+/* Actions */
+.actions-section{padding:10px 20px;display:flex;gap:8px;border-bottom:1px solid #1e2a3a;flex-wrap:wrap}
+.btn-unhold{padding:7px 14px;border-radius:8px;border:none;cursor:pointer;font-size:.8rem;font-weight:600;background:#854d0e;color:#fef3c7;transition:background .2s}
+.btn-unhold:hover{background:#a16207}
+/* Historique events */
+.history-section{padding:12px 20px 16px}
+.history-title{font-size:.68rem;color:#334155;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.history-list{max-height:100px;overflow-y:auto}
+.history-list::-webkit-scrollbar{width:4px}
+.history-list::-webkit-scrollbar-thumb{background:#1e2a3a;border-radius:2px}
+.history-item{display:flex;align-items:baseline;gap:8px;padding:2px 0}
+.history-time{font-size:.65rem;color:#334155;flex-shrink:0;font-variant-numeric:tabular-nums}
+.history-text{font-size:.73rem;color:#475569}
+/* Onglet Historique */
+#history-pane{padding:24px}
+.history-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.history-toolbar h2{font-size:1rem;font-weight:600;color:#94a3b8}
+.btn-clear{padding:6px 14px;border-radius:8px;border:1px solid #7f1d1d;background:transparent;color:#fca5a5;font-size:.78rem;cursor:pointer}
+.btn-clear:hover{background:#7f1d1d}
+#history-list{display:flex;flex-direction:column;gap:10px}
+.hist-card{background:#161b26;border:1px solid #1e2a3a;border-radius:10px;padding:14px 18px}
+.hist-card-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;gap:12px}
+.hist-phone{font-size:1.05rem;font-weight:700;color:#e2e8f0}
+.hist-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;flex-shrink:0}
+.hist-time{font-size:.7rem;color:#475569}
+.hist-profile{font-size:.68rem;background:#1e3a5f;color:#93c5fd;padding:2px 8px;border-radius:12px}
+.hist-state{font-size:.68rem;padding:2px 8px;border-radius:12px}
+.hist-state-HOLD{background:#3d2a00;color:#fbbf24}
+.hist-state-DONE{background:#14532d;color:#86efac}
+.hist-state-DROPPED{background:#450a0a;color:#fca5a5}
+.hist-state-ACTIVE{background:#1e2a3a;color:#64748b}
+.hist-results{display:flex;gap:8px;flex-wrap:wrap}
+.hist-box{background:#0f1117;border:1px solid #166534;border-radius:8px;padding:8px 14px;text-align:center}
+.hist-box-label{font-size:.62rem;color:#475569;text-transform:uppercase;margin-bottom:3px}
+.hist-box-value{font-size:1rem;font-weight:700;color:#4ade80;font-family:'Courier New',monospace;letter-spacing:1px}
+.hist-empty{text-align:center;padding:60px 0;color:#334155;font-size:.9rem}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="dot" id="dot"></div>
+    <span class="logo">IVR Live Panel</span>
+  </div>
+  <span class="ws-label" id="ws-label">Déconnecté</span>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('active')" id="tab-active">
+    Appels actifs <span class="tab-badge" id="badge-active">0</span>
+  </button>
+  <button class="tab-btn" onclick="switchTab('history')" id="tab-history">
+    Historique <span class="tab-badge" id="badge-history">0</span>
+  </button>
+</div>
+
+<div id="active-pane" class="pane active">
+  <div id="calls-grid">
+    <div class="empty-state">
+      <div class="icon">📞</div>
+      <p>Aucun appel actif</p>
+      <p style="margin-top:6px;font-size:.8rem">En attente d'un appel...</p>
+    </div>
+  </div>
+</div>
+
+<div id="history-pane" class="pane">
+  <div class="history-toolbar">
+    <h2>Historique des appels</h2>
+    <button class="btn-clear" onclick="clearHistory()">🗑 Effacer tout</button>
+  </div>
+  <div id="history-list"><div class="hist-empty">Aucun appel enregistré</div></div>
+</div>
+
+<script>
+let calls={}, history=[], ws, currentTab='active';
+
+function switchTab(tab){
+  currentTab=tab;
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active'));
+  document.getElementById('tab-'+tab).classList.add('active');
+  document.getElementById(tab==='active'?'active-pane':'history-pane').classList.add('active');
+}
+
+function connect(){
+  ws=new WebSocket(`ws://${location.host}`);
+  ws.onopen=()=>setStatus(true);
+  ws.onclose=()=>{setStatus(false);setTimeout(connect,3000)};
+  ws.onmessage=e=>handleMessage(JSON.parse(e.data));
+}
+
+function setStatus(ok){
+  document.getElementById('dot').className='dot'+(ok?' connected':'');
+  const l=document.getElementById('ws-label');
+  l.textContent=ok?'Connecté':'Déconnecté';
+  l.className='ws-label'+(ok?' connected':'');
+}
+
+function handleMessage(msg){
+  switch(msg.type){
+    case 'init':
+      calls=msg.calls||{};history=msg.history||[];
+      renderAll();renderHistory();break;
+    case 'call_new': case 'call_updated':
+      calls[msg.call.callId]=msg.call;renderAll();break;
+    case 'state_change':
+      if(calls[msg.callId])calls[msg.callId].state=msg.data.state;
+      renderCard(msg.callId);break;
+    case 'step_started':
+      ensure(msg.callId);
+      calls[msg.callId].currentStep=msg.data.stepIndex;
+      if(!calls[msg.callId].stepResults[msg.data.stepId])
+        calls[msg.callId].stepResults[msg.data.stepId]={label:msg.data.stepLabel,value:'',status:'current'};
+      else calls[msg.callId].stepResults[msg.data.stepId].status='current';
+      renderCard(msg.callId);break;
+    case 'dtmf_digit':
+      ensure(msg.callId);
+      if(!calls[msg.callId].stepResults[msg.data.stepId])
+        calls[msg.callId].stepResults[msg.data.stepId]={label:msg.data.stepId,value:'',status:'current'};
+      calls[msg.callId].stepResults[msg.data.stepId].value=msg.data.collected;
+      calls[msg.callId].stepResults[msg.data.stepId].status='current';
+      renderCard(msg.callId);break;
+    case 'step_reset':
+      ensure(msg.callId);
+      if(calls[msg.callId].stepResults[msg.data.stepId]){
+        calls[msg.callId].stepResults[msg.data.stepId].value='';
+        calls[msg.callId].stepResults[msg.data.stepId].status='current';
+      }
+      renderCard(msg.callId);break;
+    case 'step_validated':
+      ensure(msg.callId);
+      if(!calls[msg.callId].stepResults[msg.data.stepId])
+        calls[msg.callId].stepResults[msg.data.stepId]={label:msg.data.stepLabel,value:'',status:'done'};
+      calls[msg.callId].stepResults[msg.data.stepId].value=msg.data.value;
+      calls[msg.callId].stepResults[msg.data.stepId].status='done';
+      renderCard(msg.callId);break;
+    case 'sequence_complete': case 'call_hold':
+      if(calls[msg.callId])calls[msg.callId].state='HOLD';
+      renderCard(msg.callId);break;
+    case 'call_dropped':
+      if(calls[msg.callId])calls[msg.callId].state='DROPPED';
+      renderCard(msg.callId);break;
+    case 'call_done':
+      if(calls[msg.callId])calls[msg.callId].state='DONE';
+      renderCard(msg.callId);break;
+    case 'call_removed':
+      delete calls[msg.callId];renderAll();break;
+    case 'history_updated':
+      history=msg.history||[];renderHistory();break;
+    default:
+      if(msg.callId&&calls[msg.callId])renderCard(msg.callId);
+  }
+  updateBadges();
+}
+
+function renderAll(){
+  const grid=document.getElementById('calls-grid');
+  const ids=Object.keys(calls);
+  if(!ids.length){
+    grid.innerHTML='<div class="empty-state"><div class="icon">📞</div><p>Aucun appel actif</p><p style="margin-top:6px;font-size:.8rem">En attente d\'un appel...</p></div>';
+    return;
+  }
+  const existing=new Set([...grid.querySelectorAll('[data-callid]')].map(e=>e.dataset.callid));
+  ids.forEach(id=>{
+    if(existing.has(id)){renderCard(id);}
+    else{
+      const el=document.createElement('div');
+      el.dataset.callid=id;el.innerHTML=buildCard(calls[id]);
+      grid.querySelector('.empty-state')?.remove();
+      grid.appendChild(el);
+    }
+  });
+  existing.forEach(id=>{if(!calls[id])grid.querySelector(`[data-callid="${id}"]`)?.remove();});
+}
+
+function renderCard(callId){
+  if(!calls[callId])return;
+  const el=document.querySelector(`[data-callid="${callId}"]`);
+  if(el)el.innerHTML=buildCard(calls[callId]);
+  else renderAll();
+}
+
+function buildCard(call){
+  const state=call.state||'IDLE';
+  const phone=call.phoneDisplay||call.phone||'';
+  const results=call.stepResults||{};
+  const keys=Object.keys(results);
+  const isComplete=state==='HOLD'||state==='DONE';
+  const pct=call.totalSteps>0?Math.min(100,Math.round(((call.currentStep+(isComplete?1:0))/call.totalSteps)*100)):0;
+  const stepNames=getStepNames(call.profile,call.totalSteps);
+
+  // Cases d info separees
+  const boxesHTML=keys.length?keys.map(k=>{
+    const r=results[k];
+    const valCls=r.status==='done'?'done':r.status==='current'&&r.value?'live':'empty';
+    return `<div class="info-box ${r.status==='done'?'done-box':r.status==='current'?'highlight':''}">
+      <div class="info-box-label">${r.label||k}</div>
+      <div class="info-box-value ${valCls}">${r.value||'···'}</div>
+    </div>`;
+  }).join(''):'<div style="color:#334155;font-size:.8rem;padding:8px 0;width:100%">En attente des saisies...</div>';
+
+  const chipsHTML=stepNames.map((name,i)=>{
+    let cls='';
+    if(isComplete)cls='done';
+    else if(i<call.currentStep)cls='done';
+    else if(i===call.currentStep)cls='current';
+    return `<span class="step-chip ${cls}">${name}</span>`;
+  }).join('');
+
+  const hist=(call.history||[]).slice(-6).reverse();
+  const histHTML=hist.map(h=>`<div class="history-item"><span class="history-time">${h.time}</span><span class="history-text">${h.event}</span></div>`).join('');
+
+  return `<div class="call-card state-${state}">
+    <div class="card-header">
+      <div class="card-header-left">
+        <div class="phone-number ${!phone?'no-phone':''}">${phone||'Numéro inconnu'}</div>
+        <div class="call-meta">
+          ${call.label?`<span class="call-profile-tag">${call.label}</span>`:''}
+          <span class="call-time">${call.startTime||''}</span>
+        </div>
+      </div>
+      <span class="state-badge badge-${state}">${stateLabel(state)}</span>
+    </div>
+    <div class="info-boxes">${boxesHTML}</div>
+    ${call.totalSteps>0?`<div class="progress-section">
+      <div class="progress-label">Progression — étape ${Math.min(call.currentStep+1,call.totalSteps)} / ${call.totalSteps}</div>
+      <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+      <div class="step-names">${chipsHTML}</div>
+    </div>`:''}
+    ${state==='HOLD'?`<div class="actions-section"><button class="btn-unhold" onclick="sendUnhold('${call.callId}')">▶ Reprendre l'appel</button></div>`:''}
+    <div class="history-section">
+      <div class="history-title">Historique</div>
+      <div class="history-list">${histHTML||'<div class="history-item"><span class="history-text" style="color:#1e2a3a">Aucun événement</span></div>'}</div>
+    </div>
+  </div>`;
+}
+
+function renderHistory(){
+  const c=document.getElementById('history-list');
+  if(!history.length){c.innerHTML='<div class="hist-empty">Aucun appel enregistré</div>';return;}
+  c.innerHTML=history.map(call=>{
+    const results=call.stepResults||{};
+    const keys=Object.keys(results).filter(k=>results[k].value);
+    const boxesHTML=keys.map(k=>`<div class="hist-box">
+      <div class="hist-box-label">${results[k].label||k}</div>
+      <div class="hist-box-value">${results[k].value}</div>
+    </div>`).join('');
+    const fs=call.finalState||call.state||'DONE';
+    return `<div class="hist-card">
+      <div class="hist-card-header">
+        <div>
+          <div class="hist-phone">${call.phoneDisplay||call.phone||'Inconnu'}</div>
+          ${call.label?`<div style="margin-top:3px;font-size:.75rem;color:#475569">${call.label}</div>`:''}
+        </div>
+        <div class="hist-meta">
+          <span class="hist-time">${call.startTime||''}</span>
+          <span class="hist-state hist-state-${fs}">${stateLabel(fs)}</span>
+        </div>
+      </div>
+      ${keys.length?`<div class="hist-results">${boxesHTML}</div>`:'<div style="color:#334155;font-size:.75rem">Aucune donnée collectée</div>'}
+    </div>`;
+  }).join('');
+}
+
+function updateBadges(){
+  document.getElementById('badge-active').textContent=Object.keys(calls).length;
+  document.getElementById('badge-history').textContent=history.length;
+}
+
+function getStepNames(profile,total){
+  const map={ecole:['Tél. école','Poste','Groupe'],classe:['N° classe']};
+  if(profile&&map[profile])return map[profile];
+  return Array.from({length:total||1},(_,i)=>`Étape ${i+1}`);
+}
+
+function stateLabel(s){
+  return({IDLE:'Inactif',ACTIVE:'En ligne 📞',PLAYING:'Audio ▶',COLLECTING:'Saisie ⌨',HOLD:'En attente ⏸',DONE:'Terminé ✓',DROPPED:'Raccroché ✕'})[s]||s;
+}
+
+function sendUnhold(callId){fetch(`/api/unhold/${callId}`,{method:'POST'});}
+function clearHistory(){if(!confirm('Effacer tout l\'historique ?'))return;fetch('/api/history',{method:'DELETE'});}
+function ensure(id){if(!calls[id])calls[id]={callId:id,state:'ACTIVE',phone:'',phoneDisplay:'',startTime:now(),profile:null,label:null,currentStep:0,totalSteps:1,stepResults:{},history:[]};}
+function now(){return new Date().toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+
+connect();
+</script>
+</body>
+</html>
