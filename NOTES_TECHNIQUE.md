@@ -1,123 +1,267 @@
-# MicroSIP IVR — Notes Techniques
+# MicroSIP IVR — Notes Techniques v2.0
 
 ## Vue d'ensemble
 MicroSIP (fork de swc188/microsip) avec module IVR natif intégré.
-Agent appelant → bouton "IVR +" → menu popup → WAV joue dans l'appel → client tape DTMF → dashboard temps réel → appel mis en hold.
+Agent → bouton **"IVR +"** → menu popup → WAV joue → client tape DTMF → WAV finale → hold → Live Panel temps réel.
 
 ## Repo GitHub
 `hamid22hamid/microsip00` (fork de `swc188/microsip`)
-Build automatique via GitHub Actions (windows-2022, VS2022, PJSIP 2.15.1).
+Build **manuel uniquement** → Actions → "Build MicroSIP" → "Run workflow".
 
 ---
 
-## Architecture du code IVR
+## Releases
 
-### Fichiers ajoutés (nouveaux)
-| Fichier | Rôle |
-|---------|------|
-| `IVRSession.cpp/h` | Moteur IVR : état machine, lecture WAV (pjsua_player), collecte DTMF, HTTP vers Live Panel |
-| `IVRDefs.h` | IDs des contrôles IVR (IDC_IVR_MENU=1205, IVR_CMD_ECOLE=40001, IVR_CMD_CLASSE=40002) |
-
-### Fichiers modifiés (swc188 + IVR)
-| Fichier | Modifications IVR |
-|---------|------------------|
-| `Resource.h` | IDC_IVR_MENU 1205 (swc188 original = 537 lignes + nos 2 lignes) |
-| `global.h` | UM_IVR_AUDIO_DONE + UM_IVR_NEXT_STEP ajoutés à l'enum EUserWndMessages |
-| `mainDlg.cpp` | include IVRSession.h, DTMF forward, OnDestroy cleanup, message map, OnInitDialog SetPanelTarget, StartIVREcole/Classe impl, handlers onIvrAudioDone/NextStep |
-| `mainDlg.h` | Déclarations StartIVREcole/Classe + handlers LRESULT |
-| `Dialer.cpp` | ON_BN_CLICKED(IDC_IVR_MENU), ShowWindow pendant appel, AutoMove, handler OnBnClickedIvrMenu() avec CMenu::TrackPopupMenu |
-| `Dialer.h` | Déclaration OnBnClickedIvrMenu() |
-| `res/dialog.rc2` | PUSHBUTTON "IVR +", IDC_IVR_MENU, 4, IDD_DIALER_OFFSET_SPEAKER, 30, 11 |
-| `microsip.vcxproj` | IVRSession.cpp/h ajoutés, v140→v143, SDK 8.1→10.0 |
+| Version | Description |
+|---------|-------------|
+| **v2.0** | Installateur complet, SQLite, 4 profils FR+EN, WAV finale, contrôles agent |
+| **v1.0** | Première version stable — IVR fonctionnel, Ecole/Classe, Live Panel |
 
 ---
 
-## Build GitHub Actions
-Fichier : `.github/workflows/build.yml`
+## Structure du repo
 
-Points critiques résolus :
-- `runs-on: windows-2022` (pas windows-latest → trop récent, pas windows-2019 → trop lent)
-- PJSIP compile en `Configuration=Release-Static` (donne /MT = match avec MicroSIP /MT)
-- libpjproject-i386-Win32-vc14-Release-Static.lib = le gros .lib unifié nécessaire au lien
-- PJMEDIA_HAS_VIDEO=1 (MicroSIP appelle pjsua_vid_*, doit exister)
-- PJMEDIA_HAS_OPUS=0, SILK=0, FFMPEG=0, VPX=0 (pas de libs externes)
-- Codecs gardés : G722, G7221, G726, GSM, Speex, iLBC, SRTP, TLS
-
----
-
-## IDs des contrôles IVR
 ```
-IDC_IVR_MENU    = 1205   (bouton "IVR +" dans la barre du bas)
-IVR_CMD_ECOLE   = 40001  (item menu popup)
-IVR_CMD_CLASSE  = 40002  (item menu popup)
-// Prochain ID dispo : IVR_CMD_NOUVEAU = 40003
+microsip00/
+├── .github/workflows/build.yml     ← pipeline CI (build + installateur)
+├── livepanel/
+│   ├── server.js                   ← backend Node.js SQLite v1.4
+│   ├── package.json                ← express, ws, better-sqlite3
+│   └── public/index.html           ← dashboard onglets Actifs + Historique
+├── installer/
+│   ├── setup.iss                   ← script Inno Setup
+│   ├── Lancer-IVR.vbs              ← lanceur silencieux agents
+│   └── wav/                        ← 10 fichiers audio (uploadés manuellement)
+│       ├── demande_telephone.wav / demande_poste.wav
+│       ├── demande_classe.wav / demande_groupe.wav
+│       ├── merci_patientez.wav
+│       ├── en_demande_telephone.wav / en_demande_poste.wav
+│       ├── en_demande_classe.wav / en_demande_groupe.wav
+│       └── en_merci_patientez.wav
+├── IVRSession.cpp / IVRSession.h   ← moteur IVR
+├── IVRDefs.h                       ← IDs boutons + commandes
+├── Dialer.cpp / Dialer.h           ← menu popup IVR
+├── mainDlg.cpp / mainDlg.h         ← hooks call state + StartIVR*
+├── Resource.h                      ← IDC_IVR_MENU=1205
+├── global.h                        ← UM_IVR_AUDIO_DONE + UM_IVR_NEXT_STEP
+├── res/dialog.rc2                  ← PUSHBUTTON "IVR +" à OFFSET_SPEAKER
+└── microsip.vcxproj                ← IVRSession ajouté, v143, SDK 10.0
 ```
 
 ---
 
-## Ajouter un nouveau bouton IVR (futur)
+## Artefacts du build
 
-**3 fichiers, quelques lignes :**
+| Artefact | Usage |
+|----------|-------|
+| `MicroSIP-Build` | microsip.exe seul — test rapide |
+| `MicroSIP-Portable` | ZIP portable |
+| **`MicroSIP-IVR-Setup`** | **Installateur .exe → distribuer aux agents** |
 
-**1. `IVRDefs.h`**
+---
+
+## IVR — 4 Profils
+
+### Français
+| Profil | Menu | Étapes | WAV finale |
+|--------|------|--------|------------|
+| IVR École | 🇫🇷 IVR École | Tél.(7) → Poste → Groupe(3-4) | merci_patientez.wav |
+| IVR Classe | 🇫🇷 IVR Classe | N° classe | merci_patientez.wav |
+
+### English
+| Profile | Menu | Steps | Final WAV |
+|---------|------|-------|-----------|
+| IVR School | 🇬🇧 IVR School (EN) | Phone(7) → Extension → Group(3-4) | en_merci_patientez.wav |
+| IVR Class | 🇬🇧 IVR Class (EN) | Class number | en_merci_patientez.wav |
+
+### Flux de fin (v2.0)
+```
+Dernière étape validée → WAV finale joue → EOF callback → DoHold() → hold
+```
+
+### Ajouter un profil IVR
+1. `IVRDefs.h` → `#define IVR_CMD_NOUVEAU 40005`
+2. `IVRSession.cpp` → `IVRProfile IVR_MakeProfileNouveau()`
+3. `IVRSession.h` → déclarer la fonction
+4. `Dialer.cpp` → `menu.AppendMenu(...)` + `case IVR_CMD_NOUVEAU:`
+5. `mainDlg.h/.cpp` → déclarer et implémenter `StartIVRNouveau()`
+6. Uploader les WAVs dans `installer/wav/`
+
+---
+
+## IDs — Référence
+
 ```cpp
-#define IVR_CMD_NOUVEAU 40003
+IDC_IVR_MENU    = 1205   // bouton "IVR +"
+
+// Profils
+IVR_CMD_ECOLE     = 40001
+IVR_CMD_CLASSE    = 40002
+IVR_CMD_SCHOOL_EN = 40003
+IVR_CMD_CLASS_EN  = 40004
+
+// Contrôles agent (IVR actif seulement)
+IVR_CMD_REPLAY    = 40010  // ↺ Rejouer étape
+IVR_CMD_SKIP      = 40011  // ⏭ Étape suivante
+IVR_CMD_STOP_IVR  = 40012  // ⏹ Arrêter IVR
 ```
 
-**2. `Dialer.cpp`** dans `OnBnClickedIvrMenu()` :
+---
+
+## IVRSession — Architecture
+
+### IVRProfile (struct)
 ```cpp
-menu.AppendMenu(MF_STRING, IVR_CMD_NOUVEAU, _T("IVR Nouveau"));
-// ...
-case IVR_CMD_NOUVEAU: mainDlg->StartIVRNouveau(); break;
+struct IVRProfile {
+    std::string id;
+    std::string label;
+    std::vector<IVRStep> steps;
+    std::string finaleAudioFile; // joué AVANT hold (ex: "C:\IVR\merci_patientez.wav")
+};
 ```
 
-**3. `mainDlg.cpp`** :
+### Members clés
 ```cpp
-void CmainDlg::StartIVRNouveau() {
-    pjsua_call_id callId = CurrentCallId();
-    if (callId == PJSUA_INVALID_ID) return;
-    IVRSession::Instance().Start(IVR_MakeProfileNouveau(), callId);
-}
+IVRState        m_state;
+pjsua_call_id   m_callId;
+IVRProfile      m_profile;
+int             m_stepIndex;
+std::string     m_currentDigits;
+std::map<...>   m_results;        // accumulés entre IVR sur même appel
+bool            m_pendingHold;    // true = WAV finale joue, hold en attente
+pjsua_player_id m_playerId;
 ```
-+ déclarer `StartIVRNouveau()` dans `mainDlg.h`
-+ implémenter `IVR_MakeProfileNouveau()` dans `IVRSession.cpp`
 
----
+### Méthodes publiques
+| Méthode | Appelée par |
+|---------|-------------|
+| `Start(profile, callId)` | mainDlg→StartIVR*() |
+| `Stop()` | mainDlg→IVRCancel() |
+| `OnCallAnswered(callId)` | mainDlg on_call_state CONFIRMED |
+| `OnCallDropped()` | mainDlg DISCONNECTED si IVR actif |
+| `OnCallEnded(callId)` | mainDlg DISCONNECTED si IVR inactif |
+| `OnDTMF(digit)` | mainDlg on_dtmf_digit |
+| `OnAudioDone()` | mainDlg UM_IVR_AUDIO_DONE (→ hold si pendingHold) |
+| `OnNextStep()` | mainDlg UM_IVR_NEXT_STEP |
+| `ReplayCurrentStep()` | mainDlg→IVRReplayStep() |
+| `SkipStep()` | mainDlg→IVRSkipStep() |
 
-## Profils IVR (dans IVRSession.cpp)
+### Constantes
 ```cpp
-IVRProfile IVR_MakeProfileEcole() {
-    // Étape 1 : numéro de téléphone de l'école
-    // Étape 2 : numéro de poste
-    // WAV : C:\IVR\demande_telephone.wav, C:\IVR\demande_poste.wav
-}
-IVRProfile IVR_MakeProfileClasse() {
-    // Étape 1 : numéro de classe
-    // WAV : C:\IVR\demande_classe.wav
-}
+IVR_MAX_DIGITS      = 16    // max chiffres/étape
+IVR_HTTP_TIMEOUT_MS = 2000  // timeout vers Live Panel
+IVR_AUTO_HANGUP_SEC = 600   // 10 min → auto-hangup si agent oublie
 ```
 
----
-
-## Live Panel (backend)
-- Dossier : `C:\IVR\livepanel\`
-- Lancer : `node server.js`
-- URL : `http://localhost:3000`
-- Endpoint : POST `/api/ivr-event` (reçoit les événements IVR de IVRSession.cpp)
-- WebSocket : temps réel vers le navigateur
-
----
-
-## Fichiers WAV
-- Dossier : `C:\IVR\`
-- Format : 16-bit, mono, 16000 Hz PCM
-- Fichiers : `demande_telephone.wav`, `demande_poste.wav`, `demande_classe.wav`
+### Fixes
+| Fix | Description |
+|-----|-------------|
+| FIX-1 | `OnCallDropped()` → Stop() si appel coupé pendant IVR |
+| FIX-2 | HTTP timeout 2s → panel absent ne bloque pas PJSIP |
+| FIX-3 | `FileExists()` vérifie WAVs avant de jouer |
+| FIX-4 | Auto-hangup 10 min si hold sans action |
+| FIX-5 | Guard `IsActive()` → refuse double Start |
+| FIX-6 | `#` sans chiffre = ignoré |
+| FIX-7 | Max 16 chiffres par étape |
 
 ---
 
-## Historique des bugs résolus (pour référence)
-1. **Corruption de fichiers** : ne jamais drag-and-drop des zips sur GitHub. Toujours copier-coller via l'éditeur.
-2. **Mauvaise version** : swc188/microsip ≠ hamid22hamid/MicroSip-updated. Tout le code IVR est basé sur swc188.
-3. **Casse resource.h** : `res/dialog.rc2` doit être édité dans le sous-dossier `res/`, pas à la racine.
-4. **Crash au clic Call** : GetDlgItem() retournait NULL car les boutons étaient hors zone (BOTTOM_BUTTONS trop bas). Fix : position à OFFSET_SPEAKER + vérifications NULL.
-5. **Runtime mismatch** : PJSIP compilé en Release (MD) ≠ MicroSIP MT. Fix : `Configuration=Release-Static`.
+## Live Panel v1.4 (SQLite)
+
+### Stack
+Node.js 20 + Express + WebSocket + better-sqlite3
+
+### DB
+`C:\IVR\ivr_history.db` — table `call_history`
+Colonnes : id, callId, phone, phoneDisplay, label, profile, startTime, archivedAt, finalState, stepResults (JSON), eventHistory (JSON)
+
+### Endpoints
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/ivr-event` | Tous les événements IVR |
+| `POST /api/unhold/:callId` | Reprendre appel depuis le panel |
+| `GET /api/history` | 200 derniers appels |
+| `GET /api/history/search?q=` | Recherche |
+| `DELETE /api/history` | Effacer tout |
+
+### Événements IVR → panel
+`call_answered` (dès décrochage), `ivr_started`, `state_change`, `step_started`,
+`dtmf_digit`, `step_reset`, `step_validated`, `ivr_finale_playing`,
+`sequence_complete`, `call_hold`, `ivr_call_dropped`, `call_ended`
+
+---
+
+## Installateur Windows
+
+### Processus build
+```
+1. PJSIP 2.15.1 Release-Static /MT
+2. microsip.exe (MSBuild v143)
+3. npm install (better-sqlite3 + express + ws)
+4. Node.js 20 portable x64
+5. Vérif WAVs dans installer/wav/
+6. Inno Setup 6 → MicroSIP-IVR-Setup.exe
+```
+
+### Contenu installé
+```
+{app}\microsip.exe
+{app}\node\          (Node.js 20 portable)
+{app}\livepanel\     (server.js + node_modules + index.html)
+{app}\Lancer-IVR.vbs
+C:\IVR\*.wav         (10 fichiers audio)
+Bureau\IVR Live Panel (raccourci)
+```
+
+### Lancer-IVR.vbs
+1. Vérifie localhost:3000 → déjà lancé ?
+2. Non → `node.exe server.js` sans fenêtre CMD
+3. Attends 2.5s → ouvre navigateur sur `http://localhost:3000`
+
+### setup.iss — Points critiques
+- **Chemins** : relatifs à `installer\` (utiliser `..` pour remonter)
+- **OutputDir** : `output` (pas `installer\output`)
+- **SetupIconFile** : supprimé (causait erreur ligne 20)
+- Chemins fichiers sources : `..\Release\microsip.exe`, `node\*`, `livepanel\*`, `wav\*.wav`
+
+### Mettre à jour les WAVs
+Format requis : **16-bit, mono, 16000 Hz, PCM**
+GitHub → `installer/wav/` → "Upload files" → rebuild
+
+---
+
+## Build GitHub Actions — Points critiques
+
+- **Trigger** : `workflow_dispatch` uniquement (plus de build auto)
+- **Runner** : `windows-2022` (VS2022 v143)
+- **PJSIP** : `Release-Static` → `/MT` natif
+- **Node.js** : version 20 — doit être identique entre `setup-node` et le ZIP portable
+- **WAVs** : depuis le repo `installer/wav/` (pas de génération TTS)
+
+---
+
+## Bugs résolus — Référence
+
+| # | Symptôme | Cause | Fix |
+|---|----------|-------|-----|
+| 1 | Crash au clic Call | `GetDlgItem` NULL (bouton hors zone) | Position `OFFSET_SPEAKER` + vérif NULL |
+| 2 | Boutons IVR invisibles | `dialog.rc2` pas uploadé correctement | Upload dans `res/dialog.rc2` |
+| 3 | LNK2001 `__imp___stricmp` | PJSIP `/MD` vs MicroSIP `/MT` | PJSIP en `Release-Static` |
+| 4 | C2065 `call_id` undeclared | Variable = `call_info->id` dans ce scope | Remplacé partout |
+| 5 | C2653 `IVRSession` unknown | `#include "IVRSession.h"` manquant Dialer.cpp | Include ajouté |
+| 6 | Inno Setup erreur ligne 20 | `SetupIconFile` + mauvais `OutputDir` | Supprimé + corrigé |
+| 7 | Erreur SIP 503 | Appel hold jamais raccroché | Auto-hangup 10 min |
+| 8 | Historique perdu au restart | JSON en mémoire seulement | SQLite `C:\IVR\ivr_history.db` |
+| 9 | Panel vide avant IVR | Pas de notif au décrochage | `OnCallAnswered()` sur CONFIRMED |
+| 10 | Résultats effacés entre IVR | `m_results.clear()` dans `Start()` | Clear seulement si nouveau `callId` |
+
+---
+
+## Contexte pour future session Claude
+
+Lire ce fichier, puis :
+- Fichiers IVR C++ : `IVRSession.cpp/h`, `IVRDefs.h`, `Dialer.cpp`, `mainDlg.cpp/h`, `res/dialog.rc2`
+- Live Panel : `livepanel/server.js` + `livepanel/public/index.html`
+- Installateur : `installer/setup.iss` + `installer/Lancer-IVR.vbs`
+- Builder : Actions → "Build MicroSIP" → "Run workflow"
+- Release v2.0 existante sur GitHub avec `microsip.exe` + installateur fonctionnel
