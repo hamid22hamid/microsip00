@@ -330,31 +330,16 @@ jobs:
         Write-Host "Préparation du Live Panel..."
         New-Item -ItemType Directory -Force -Path "installer\livepanel\public" | Out-Null
 
-        # Copier les fichiers du live panel depuis le repo
+        # Copier SEULEMENT les sources (sans node_modules)
+        # npm install sera fait sur la machine de l'agent par Inno Setup [Code]
         if (Test-Path "livepanel\server.js") {
-            Copy-Item "livepanel\server.js"         "installer\livepanel\"
-            Copy-Item "livepanel\package.json"      "installer\livepanel\"
+            Copy-Item "livepanel\server.js"          "installer\livepanel\"
+            Copy-Item "livepanel\package.json"       "installer\livepanel\"
             Copy-Item "livepanel\public\index.html" "installer\livepanel\public\"
-            Write-Host "Fichiers Live Panel copiés depuis livepanel/"
+            Write-Host "✅ Fichiers Live Panel copiés (node_modules installés sur la machine de l'agent)"
         } else {
             Write-Host "ERREUR: dossier livepanel/ introuvable dans le repo!"
-            Write-Host "Créez le dossier livepanel/ avec server.js, package.json, public/index.html"
             exit 1
-        }
-
-        # Installer les dépendances npm (better-sqlite3 compile des binaires natifs)
-        Write-Host "Installation des dépendances npm (SQLite, express, ws)..."
-        Set-Location "installer\livepanel"
-        npm install --production 2>&1
-        if ($LASTEXITCODE -ne 0) { Write-Host "npm install failed"; exit 1 }
-        Write-Host "npm install OK"
-        Set-Location "${{ github.workspace }}"
-
-        # Vérifier que better-sqlite3 est bien installé
-        if (Test-Path "installer\livepanel\node_modules\better-sqlite3") {
-            Write-Host "✅ better-sqlite3 installé"
-        } else {
-            Write-Host "⚠ better-sqlite3 absent"
         }
 
     - name: Download Node.js 20 portable (bundle avec l'installateur)
