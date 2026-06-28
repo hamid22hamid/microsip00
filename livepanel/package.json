@@ -1,14 +1,12 @@
 {
   "name": "ivr-live-panel",
-  "version": "1.4.0",
-  "description": "Live Panel IVR MicroSIP — SQLite",
+  "version": "1.5.0",
+  "description": "Live Panel IVR MicroSIP — sql.js (SQLite pur JS)",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
+  "scripts": { "start": "node server.js" },
   "dependencies": {
     "express": "^4.19.2",
     "ws": "^8.17.0",
-    "better-sqlite3": "^9.4.3"
+    "sql.js": "^1.12.0"
   }
 }
