@@ -101,8 +101,10 @@ function getHistory(limit = 100) {
 function archiveCall(id) {
     if (!calls[id] || !stmtInsert) return;
     const call = calls[id];
+    // Archiver si : données collectées OU appel terminé/raccroché (même sans données)
     const hasData = Object.keys(call.stepResults || {}).some(k => call.stepResults[k].value);
-    if (!hasData && call.state === 'ACTIVE') return;
+    const shouldArchive = hasData || ['DONE','DROPPED','HOLD'].includes(call.state);
+    if (!shouldArchive) return;
 
     try {
         stmtInsert.run({
