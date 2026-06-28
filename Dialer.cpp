@@ -1676,19 +1676,20 @@ void Dialer::OnBnClickedIvrMenu()
 	menu.CreatePopupMenu();
 
 	// === Francais ===
-	menu.AppendMenu(MF_STRING, IVR_CMD_ECOLE,  _T("🇫🇷 IVR École"));
-	menu.AppendMenu(MF_STRING, IVR_CMD_CLASSE, _T("🇫🇷 IVR Classe"));
+	menu.AppendMenu(MF_STRING, IVR_CMD_ECOLE,  _T("IVR Ecole"));
+	menu.AppendMenu(MF_STRING, IVR_CMD_CLASSE, _T("IVR Classe"));
 	// === English ===
 	menu.AppendMenu(MF_SEPARATOR);
-	menu.AppendMenu(MF_STRING, IVR_CMD_SCHOOL_EN, _T("🇬🇧 IVR School (EN)"));
-	menu.AppendMenu(MF_STRING, IVR_CMD_CLASS_EN,  _T("🇬🇧 IVR Class (EN)"));
+	menu.AppendMenu(MF_STRING, IVR_CMD_SCHOOL_EN, _T("IVR School (EN)"));
+	menu.AppendMenu(MF_STRING, IVR_CMD_CLASS_EN,  _T("IVR Class (EN)"));
 
 	// === Controles : visibles seulement si IVR actif ===
 	if (IVRSession::Instance().IsActive()) {
 		menu.AppendMenu(MF_SEPARATOR);
-		menu.AppendMenu(MF_STRING, IVR_CMD_REPLAY,   _T("↺  Rejouer l'étape"));
-		menu.AppendMenu(MF_STRING, IVR_CMD_SKIP,     _T("⏭  Étape suivante"));
-		menu.AppendMenu(MF_STRING, IVR_CMD_STOP_IVR, _T("⏹  Arrêter l'IVR"));
+		menu.AppendMenu(MF_GRAYED | MF_STRING, 0, _T("-- Controles IVR --"));
+		menu.AppendMenu(MF_STRING, IVR_CMD_REPLAY,   _T("Rejouer l'etape"));
+		menu.AppendMenu(MF_STRING, IVR_CMD_SKIP,     _T("Etape suivante"));
+		menu.AppendMenu(MF_STRING, IVR_CMD_STOP_IVR, _T("Arreter l'IVR"));
 	}
 
 	// Afficher le menu juste AU-DESSUS du bouton
