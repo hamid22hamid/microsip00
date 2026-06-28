@@ -1623,6 +1623,20 @@ CmainDlg::~CmainDlg(void)
 void CmainDlg::OnDestroy()
 {
 	IVRSession::Instance().Stop(); // [IVR_ADDON]
+
+	// [IVR_ADDON] Tuer le serveur Live Panel Node.js proprement
+	STARTUPINFO si = { sizeof(si) };
+	si.dwFlags = STARTF_USESHOWWINDOW;
+	si.wShowWindow = SW_HIDE;
+	PROCESS_INFORMATION pi;
+	TCHAR cmd[] = TEXT("taskkill /IM node.exe /F");
+	if (CreateProcess(NULL, cmd, NULL, NULL, FALSE,
+		CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+		WaitForSingleObject(pi.hProcess, 3000);
+		CloseHandle(pi.hProcess);
+		CloseHandle(pi.hThread);
+	}
+
 	if (mmNotificationClient) {
 		delete mmNotificationClient;
 	}
@@ -4878,7 +4892,8 @@ BOOL CmainDlg::CopyStringToClipboard(IN const CString & str)
 void CmainDlg::OnSysCommand(UINT nID, LPARAM lParam)
 {
 		if (nID == SC_CLOSE) {
-			ShowWindow(SW_HIDE);
+			// [IVR_ADDON] X ferme complètement (plus de minimize en tray)
+			DestroyWindow();
 		}
 		else {
 			if (!accountSettings.singleMode) {
