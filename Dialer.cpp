@@ -18,6 +18,7 @@
 
 #include "StdAfx.h"
 #include "Dialer.h"
+#include "IVRSession.h"  // [IVR_ADDON]
 #include "global.h"
 #include "settings.h"
 #include "mainDlg.h"
