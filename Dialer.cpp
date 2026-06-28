@@ -1687,6 +1687,7 @@ void Dialer::OnBnClickedIvrMenu()
 	if (IVRSession::Instance().IsActive()) {
 		menu.AppendMenu(MF_SEPARATOR);
 		menu.AppendMenu(MF_GRAYED | MF_STRING, 0, _T("-- Controles IVR --"));
+		menu.AppendMenu(MF_STRING, IVR_CMD_PREV_STEP, _T("Etape precedente"));
 		menu.AppendMenu(MF_STRING, IVR_CMD_REPLAY,   _T("Rejouer l'etape"));
 		menu.AppendMenu(MF_STRING, IVR_CMD_SKIP,     _T("Etape suivante"));
 		menu.AppendMenu(MF_STRING, IVR_CMD_STOP_IVR, _T("Arreter l'IVR"));
@@ -1705,6 +1706,7 @@ void Dialer::OnBnClickedIvrMenu()
 		case IVR_CMD_CLASSE:     mainDlg->StartIVRClasse();   break;
 		case IVR_CMD_SCHOOL_EN:  mainDlg->StartIVRSchoolEN(); break;
 		case IVR_CMD_CLASS_EN:   mainDlg->StartIVRClassEN();  break;
+		case IVR_CMD_PREV_STEP:  mainDlg->IVRPrevStep();      break;
 		case IVR_CMD_REPLAY:     mainDlg->IVRReplayStep();    break;
 		case IVR_CMD_SKIP:       mainDlg->IVRSkipStep();      break;
 		case IVR_CMD_STOP_IVR:   mainDlg->IVRCancel();        break;

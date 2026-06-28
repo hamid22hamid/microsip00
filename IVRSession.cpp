@@ -194,6 +194,26 @@ void IVRSession::OnCallEnded(pjsua_call_id callId)
 }
 
 // ─── [FIX-1] Appel raccroche pendant IVR ─────────────────────────────────────
+// Controles agent — retourner a l'etape precedente
+void IVRSession::GoToPreviousStep()
+{
+	if (!IsActive()) return;
+	StopPlayer();
+	// Effacer resultats de l'etape courante
+	if (m_stepIndex < (int)m_profile.steps.size())
+		m_results.erase(m_profile.steps[m_stepIndex].id);
+	// Reculer (si deja a la premiere etape, on la rejoue)
+	if (m_stepIndex > 0) m_stepIndex--;
+	// Effacer resultats de l'etape ou on revient (pour re-collecter)
+	if (m_stepIndex < (int)m_profile.steps.size())
+		m_results.erase(m_profile.steps[m_stepIndex].id);
+	SendEvent("step_back",
+		"{\"callId\":" + std::to_string((int)m_callId) +
+		",\"stepIndex\":" + std::to_string(m_stepIndex) + "}");
+	ResetCurrentStep();
+	PlayCurrentStep();
+}
+
 // Controles agent — rejouer étape courante
 void IVRSession::ReplayCurrentStep()
 {
@@ -218,8 +238,17 @@ void IVRSession::SkipStep()
 void IVRSession::OnCallDropped()
 {
 	if (!IsActive()) return;
+	// Arreter immediatement la lecture WAV avant tout
+	StopPlayer();
 	SendEvent("ivr_call_dropped",
 		"{\"callId\":" + std::to_string((int)m_callId) + "}");
+	// Forcer le raccrochage cote MicroSIP si appel encore ouvert
+	if (m_callId != PJSUA_INVALID_ID && pjsua_get_state() == PJSUA_STATE_RUNNING) {
+		pjsua_call_info ci;
+		if (pjsua_call_get_info(m_callId, &ci) == PJ_SUCCESS &&
+			ci.state != PJSIP_INV_STATE_DISCONNECTED)
+			pjsua_call_hangup(m_callId, 0, NULL, NULL);
+	}
 	Stop();
 }
 
@@ -448,11 +477,16 @@ void IVRSession::StopPlayer()
 	if (m_playerId == PJSUA_INVALID_ID) return;
 	if (pjsua_get_state() == PJSUA_STATE_RUNNING) {
 		pjsua_conf_port_id pp = pjsua_player_get_conf_port(m_playerId);
+		// Déconnecter de l'appel si possible
 		pjsua_call_info ci;
 		if (m_callId != PJSUA_INVALID_ID &&
 			pjsua_call_get_info(m_callId, &ci) == PJ_SUCCESS && ci.conf_slot >= 0)
 			pjsua_conf_disconnect(pp, ci.conf_slot);
-		pjsua_conf_disconnect(pp, 0);
+		// Déconnecter des premiers ports conf (0=speaker, 1-7=appels potentiels)
+		// Garantit l'arrêt audio même si l'appel est déjà déconnecté
+		for (pjsua_conf_port_id i = 0; i < 8; i++)
+			pjsua_conf_disconnect(pp, i);
+		// Détruire le player = arrêt définitif de l'audio
 		pjsua_player_destroy(m_playerId);
 	}
 	m_playerId = PJSUA_INVALID_ID;

@@ -57,6 +57,7 @@ public:
 	void OnCallAnswered(pjsua_call_id callId); // appel decroché → panel
 	void OnCallEnded(pjsua_call_id callId);    // appel terminé normalement
 	void OnCallDropped();                      // [FIX-1] appel coupe pendant IVR
+	void GoToPreviousStep();                   // Retourner a l'etape precedente
 	void ReplayCurrentStep();                  // Rejouer l'etape courante
 	void SkipStep();                           // Passer a l'etape suivante
 

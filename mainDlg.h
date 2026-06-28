@@ -228,6 +228,7 @@ public:
 	void StartIVRSchoolEN();   // IVR School (English)
 	void StartIVRClassEN();    // IVR Class (English)
 	void IVRReplayStep();
+	void IVRPrevStep();    // Retourner à l'étape précédente
 	void IVRSkipStep();
 	void IVRCancel();
 	afx_msg LRESULT onIvrAudioDone(WPARAM wParam, LPARAM lParam);

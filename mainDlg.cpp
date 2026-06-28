@@ -4371,6 +4371,7 @@ void CmainDlg::StartIVRClassEN()
 }
 // [IVR_ADDON] Controles agent pendant l'IVR
 void CmainDlg::IVRReplayStep()  { IVRSession::Instance().ReplayCurrentStep(); }
+void CmainDlg::IVRPrevStep()    { IVRSession::Instance().GoToPreviousStep(); }
 void CmainDlg::IVRSkipStep()    { IVRSession::Instance().SkipStep(); }
 void CmainDlg::IVRCancel()      { IVRSession::Instance().Stop(); }
 LRESULT CmainDlg::onIvrAudioDone(WPARAM w, LPARAM l) { IVRSession::Instance().OnAudioDone(); return 0; }

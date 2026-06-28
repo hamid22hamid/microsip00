@@ -16,6 +16,7 @@
 #define IVR_CMD_CLASS_EN  40004
 
 // === Controles de l'IVR en cours (visibles seulement si IVR actif) ===
+#define IVR_CMD_PREV_STEP 40009  // Retourner a l'etape precedente
 #define IVR_CMD_REPLAY    40010  // Rejouer l'etape courante
 #define IVR_CMD_SKIP      40011  // Passer a l'etape suivante
 #define IVR_CMD_STOP_IVR  40012  // Arreter l'IVR proprement
