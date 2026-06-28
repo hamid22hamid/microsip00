@@ -4356,6 +4356,23 @@ void CmainDlg::StartIVRClasse()
 	if (callId == PJSUA_INVALID_ID) { MessageBox(_T("No active call."), _T("IVR"), MB_OK|MB_ICONWARNING); return; }
 	IVRSession::Instance().Start(IVR_MakeProfileClasse(), callId);
 }
+// [IVR_ADDON] Profils anglais
+void CmainDlg::StartIVRSchoolEN()
+{
+	pjsua_call_id callId = CurrentCallId();
+	if (callId == PJSUA_INVALID_ID) { MessageBox(_T("No active call."), _T("IVR"), MB_OK|MB_ICONWARNING); return; }
+	IVRSession::Instance().Start(IVR_MakeProfileSchoolEN(), callId);
+}
+void CmainDlg::StartIVRClassEN()
+{
+	pjsua_call_id callId = CurrentCallId();
+	if (callId == PJSUA_INVALID_ID) { MessageBox(_T("No active call."), _T("IVR"), MB_OK|MB_ICONWARNING); return; }
+	IVRSession::Instance().Start(IVR_MakeProfileClassEN(), callId);
+}
+// [IVR_ADDON] Controles agent pendant l'IVR
+void CmainDlg::IVRReplayStep()  { IVRSession::Instance().ReplayCurrentStep(); }
+void CmainDlg::IVRSkipStep()    { IVRSession::Instance().SkipStep(); }
+void CmainDlg::IVRCancel()      { IVRSession::Instance().Stop(); }
 LRESULT CmainDlg::onIvrAudioDone(WPARAM w, LPARAM l) { IVRSession::Instance().OnAudioDone(); return 0; }
 LRESULT CmainDlg::onIvrNextStep(WPARAM w, LPARAM l) { IVRSession::Instance().OnNextStep(); return 0; }
 

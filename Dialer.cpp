@@ -1668,15 +1668,27 @@ void Dialer::OnBnClickedAA()
 	mainDlg->UpdateWindowText();
 	mainDlg->AccountSettingsPendingSave();
 }
-// [IVR_ADDON] Menu popup IVR - extensible
-// Pour ajouter un item : AppendMenu + cas dans le switch
+// [IVR_ADDON] Menu popup IVR - lancement + controles agent
 void Dialer::OnBnClickedIvrMenu()
 {
 	CMenu menu;
 	menu.CreatePopupMenu();
-	menu.AppendMenu(MF_STRING, IVR_CMD_ECOLE,  _T("IVR Ecole"));
-	menu.AppendMenu(MF_STRING, IVR_CMD_CLASSE, _T("IVR Classe"));
-	// Futurs items : menu.AppendMenu(MF_STRING, IVR_CMD_AUTRE, _T("IVR Autre"));
+
+	// === Francais ===
+	menu.AppendMenu(MF_STRING, IVR_CMD_ECOLE,  _T("🇫🇷 IVR École"));
+	menu.AppendMenu(MF_STRING, IVR_CMD_CLASSE, _T("🇫🇷 IVR Classe"));
+	// === English ===
+	menu.AppendMenu(MF_SEPARATOR);
+	menu.AppendMenu(MF_STRING, IVR_CMD_SCHOOL_EN, _T("🇬🇧 IVR School (EN)"));
+	menu.AppendMenu(MF_STRING, IVR_CMD_CLASS_EN,  _T("🇬🇧 IVR Class (EN)"));
+
+	// === Controles : visibles seulement si IVR actif ===
+	if (IVRSession::Instance().IsActive()) {
+		menu.AppendMenu(MF_SEPARATOR);
+		menu.AppendMenu(MF_STRING, IVR_CMD_REPLAY,   _T("↺  Rejouer l'étape"));
+		menu.AppendMenu(MF_STRING, IVR_CMD_SKIP,     _T("⏭  Étape suivante"));
+		menu.AppendMenu(MF_STRING, IVR_CMD_STOP_IVR, _T("⏹  Arrêter l'IVR"));
+	}
 
 	// Afficher le menu juste AU-DESSUS du bouton
 	CRect rect;
@@ -1687,9 +1699,13 @@ void Dialer::OnBnClickedIvrMenu()
 	menu.DestroyMenu();
 
 	switch (cmd) {
-		case IVR_CMD_ECOLE:  mainDlg->StartIVREcole();  break;
-		case IVR_CMD_CLASSE: mainDlg->StartIVRClasse(); break;
-		// Futurs : case IVR_CMD_AUTRE: mainDlg->StartIVRAutre(); break;
+		case IVR_CMD_ECOLE:      mainDlg->StartIVREcole();    break;
+		case IVR_CMD_CLASSE:     mainDlg->StartIVRClasse();   break;
+		case IVR_CMD_SCHOOL_EN:  mainDlg->StartIVRSchoolEN(); break;
+		case IVR_CMD_CLASS_EN:   mainDlg->StartIVRClassEN();  break;
+		case IVR_CMD_REPLAY:     mainDlg->IVRReplayStep();    break;
+		case IVR_CMD_SKIP:       mainDlg->IVRSkipStep();      break;
+		case IVR_CMD_STOP_IVR:   mainDlg->IVRCancel();        break;
 	}
 }
 

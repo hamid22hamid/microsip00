@@ -225,6 +225,11 @@ public:
 	// [IVR_ADDON]
 	void StartIVREcole();
 	void StartIVRClasse();
+	void StartIVRSchoolEN();   // IVR School (English)
+	void StartIVRClassEN();    // IVR Class (English)
+	void IVRReplayStep();
+	void IVRSkipStep();
+	void IVRCancel();
 	afx_msg LRESULT onIvrAudioDone(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT onIvrNextStep(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnBnClickedMenu();

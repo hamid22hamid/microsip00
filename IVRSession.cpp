@@ -26,8 +26,9 @@ static const int IVR_AUTO_HANGUP_SEC = 600;   // [FIX-4] 10 min
 IVRProfile IVR_MakeProfileEcole()
 {
 	IVRProfile p;
-	p.id    = "ecole";
-	p.label = "Collecte Ecole";
+	p.id              = "ecole";
+	p.label           = "Collecte Ecole";
+	p.finaleAudioFile = "C:\\IVR\\merci_patientez.wav";
 	p.steps = {
 		{ "telephone", "Telephone ecole", "C:\\IVR\\demande_telephone.wav", 7, 0 },
 		{ "poste",     "Poste",           "C:\\IVR\\demande_poste.wav",     0, 0 },
@@ -39,10 +40,37 @@ IVRProfile IVR_MakeProfileEcole()
 IVRProfile IVR_MakeProfileClasse()
 {
 	IVRProfile p;
-	p.id    = "classe";
-	p.label = "Collecte Classe";
+	p.id              = "classe";
+	p.label           = "Collecte Classe";
+	p.finaleAudioFile = "C:\\IVR\\merci_patientez.wav";
 	p.steps = {
 		{ "numero_classe", "Numero de classe", "C:\\IVR\\demande_classe.wav", 1, 0 }
+	};
+	return p;
+}
+
+IVRProfile IVR_MakeProfileSchoolEN()
+{
+	IVRProfile p;
+	p.id              = "school_en";
+	p.label           = "School Collection (EN)";
+	p.finaleAudioFile = "C:\\IVR\\en_merci_patientez.wav";
+	p.steps = {
+		{ "telephone", "School Phone", "C:\\IVR\\en_demande_telephone.wav", 7, 0 },
+		{ "extension", "Extension",   "C:\\IVR\\en_demande_poste.wav",     0, 0 },
+		{ "group",     "Group",       "C:\\IVR\\en_demande_groupe.wav",    3, 4 }
+	};
+	return p;
+}
+
+IVRProfile IVR_MakeProfileClassEN()
+{
+	IVRProfile p;
+	p.id              = "class_en";
+	p.label           = "Class Collection (EN)";
+	p.finaleAudioFile = "C:\\IVR\\en_merci_patientez.wav";
+	p.steps = {
+		{ "class_number", "Class Number", "C:\\IVR\\en_demande_classe.wav", 1, 0 }
 	};
 	return p;
 }
@@ -71,6 +99,7 @@ IVRSession::IVRSession()
 	, m_panelHost("localhost")
 	, m_panelPort(3000)
 	, m_panelPath("/api/ivr-event")
+	, m_pendingHold(false)
 {}
 
 IVRSession::~IVRSession() { StopPlayer(); }
@@ -128,7 +157,8 @@ void IVRSession::Stop()
 {
 	StopPlayer();
 	m_currentDigits.clear();
-	m_stepIndex = 0;
+	m_stepIndex    = 0;
+	m_pendingHold  = false;
 	m_results.clear();
 	m_callId    = PJSUA_INVALID_ID;
 	TransitionTo(IVRState::IDLE);
@@ -164,6 +194,27 @@ void IVRSession::OnCallEnded(pjsua_call_id callId)
 }
 
 // ─── [FIX-1] Appel raccroche pendant IVR ─────────────────────────────────────
+// Controles agent — rejouer étape courante
+void IVRSession::ReplayCurrentStep()
+{
+	if (!IsActive()) return;
+	SendEvent("step_replayed",
+		"{\"callId\":" + std::to_string((int)m_callId) +
+		",\"stepIndex\":" + std::to_string(m_stepIndex) + "}");
+	ResetCurrentStep();
+	PlayCurrentStep();
+}
+
+// Controles agent — passer à l'étape suivante
+void IVRSession::SkipStep()
+{
+	if (!IsActive()) return;
+	SendEvent("step_skipped",
+		"{\"callId\":" + std::to_string((int)m_callId) +
+		",\"stepIndex\":" + std::to_string(m_stepIndex) + "}");
+	AdvanceToNextStep();
+}
+
 void IVRSession::OnCallDropped()
 {
 	if (!IsActive()) return;
@@ -257,6 +308,13 @@ void IVRSession::OnNextStep()  { PlayCurrentStep(); }
 void IVRSession::OnAudioDone()
 {
 	if (m_state != IVRState::PLAYING) return;
+	// Si le WAV finale vient de se terminer → mettre en hold maintenant
+	if (m_pendingHold) {
+		m_pendingHold = false;
+		StopPlayer();
+		DoHold();
+		return;
+	}
 	StopPlayer();
 	TransitionTo(IVRState::COLLECTING);
 	if (m_stepIndex < (int)m_profile.steps.size()) {
@@ -310,6 +368,28 @@ void IVRSession::FinalizeAndHold()
 
 	StopPlayer();
 
+	// Si le profil a un WAV finale → le jouer avant de mettre en hold
+	if (!m_profile.finaleAudioFile.empty() && FileExists(m_profile.finaleAudioFile)) {
+		m_pendingHold = true;
+		TransitionTo(IVRState::PLAYING);
+		SendEvent("ivr_finale_playing",
+			"{\"callId\":" + std::to_string((int)m_callId) +
+			",\"file\":\"" + JsonEscape(m_profile.finaleAudioFile) + "\"}");
+		if (!PlayWavInCall(m_profile.finaleAudioFile)) {
+			// Si impossible de jouer, hold immédiat
+			m_pendingHold = false;
+			DoHold();
+		}
+		// Le hold se fera dans OnAudioDone() quand le WAV sera terminé
+		return;
+	}
+
+	// Pas de WAV finale → hold immédiat
+	DoHold();
+}
+
+void IVRSession::DoHold()
+{
 	if (m_callId != PJSUA_INVALID_ID) {
 		pjsua_call_info ci;
 		if (pjsua_call_get_info(m_callId, &ci) == PJ_SUCCESS &&
@@ -325,7 +405,7 @@ void IVRSession::FinalizeAndHold()
 		"{\"callId\":"  + std::to_string((int)m_callId) +
 		",\"results\":" + ResultsToJSON() + "}");
 
-	// [FIX-4] Auto-hangup apres 2 min si agent oublie
+	// [FIX-4] Auto-hangup apres 10 min si agent oublie
 	struct AHJob { pjsua_call_id cid; DWORD ms; };
 	AHJob* ahj = new AHJob{ m_callId, (DWORD)(IVR_AUTO_HANGUP_SEC * 1000) };
 	unsigned tid2 = 0;

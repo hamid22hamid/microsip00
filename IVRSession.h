@@ -30,9 +30,10 @@ struct IVRStep {
 
 // Un profil = une séquence de steps (un bouton = un profil)
 struct IVRProfile {
-	std::string id;     // ex: "ecole"
-	std::string label;  // ex: "Collecte Ecole"
+	std::string id;              // ex: "ecole"
+	std::string label;           // ex: "Collecte Ecole"
 	std::vector<IVRStep> steps;
+	std::string finaleAudioFile; // WAV joue APRES la derniere etape, avant hold
 };
 
 enum class IVRState {
@@ -56,6 +57,8 @@ public:
 	void OnCallAnswered(pjsua_call_id callId); // appel decroché → panel
 	void OnCallEnded(pjsua_call_id callId);    // appel terminé normalement
 	void OnCallDropped();                      // [FIX-1] appel coupe pendant IVR
+	void ReplayCurrentStep();                  // Rejouer l'etape courante
+	void SkipStep();                           // Passer a l'etape suivante
 
 	// Appelé depuis on_dtmf_digit (mainDlg.cpp)
 	void OnDTMF(char digit);
@@ -84,6 +87,7 @@ private:
 	void ResetCurrentStep();
 	void FinalizeAndHold();
 	void StopPlayer();
+	void DoHold();         // effectue le hold apres le WAV finale
 	void TransitionTo(IVRState s);
 
 	// Joue un WAV dans l'appel (client entend) + monitoring local (agent entend)
@@ -102,6 +106,7 @@ private:
 	int           m_stepIndex;
 	std::string   m_currentDigits;
 	std::map<std::string, std::string> m_results;
+	bool          m_pendingHold; // true = WAV finale joue, hold en attente
 
 	// Player PJSIP du step courant
 	pjsua_player_id m_playerId;
@@ -117,6 +122,8 @@ private:
 // ─────────────────────────────────────────────────────────────────────────────
 IVRProfile IVR_MakeProfileEcole();
 IVRProfile IVR_MakeProfileClasse();
+IVRProfile IVR_MakeProfileSchoolEN(); // IVR Ecole en anglais
+IVRProfile IVR_MakeProfileClassEN();  // IVR Classe en anglais
 
 // Callback EOF appelé par PJSIP quand un WAV de l'IVR se termine.
 // Doit être enregistré via pjmedia_wav_player_set_eof_cb.
