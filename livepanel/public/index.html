@@ -44,6 +44,9 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f1117;color:#e2e8f
 .badge-DROPPED{background:#450a0a;color:#fca5a5}
 .badge-ACTIVE{background:#1e2a3a;color:#94a3b8}
 .badge-IDLE{background:#1e2a3a;color:#64748b}
+.hold-instruction{font-size:.8rem;color:#fbbf24;padding:8px 14px;background:#1a1200;border-radius:8px;border:1px solid #3d2a00;}
+.ivr-active-bar{display:flex;align-items:center;gap:8px;padding:10px 20px;background:#0f1a2e;border-bottom:1px solid #2563eb;font-size:.78rem;color:#93c5fd;}
+.ivr-active-bar strong{color:#60a5fa;}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.6}}
 /* Cases d info cote a cote */
 .info-boxes{display:flex;gap:8px;padding:14px 20px;flex-wrap:wrap;border-bottom:1px solid #1e2a3a}
@@ -66,8 +69,6 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f1117;color:#e2e8f
 .step-chip.done{background:#14532d;color:#86efac;border-color:#166534}
 /* Actions */
 .actions-section{padding:10px 20px;display:flex;gap:8px;border-bottom:1px solid #1e2a3a;flex-wrap:wrap}
-.btn-unhold{padding:7px 14px;border-radius:8px;border:none;cursor:pointer;font-size:.8rem;font-weight:600;background:#854d0e;color:#fef3c7;transition:background .2s}
-.btn-unhold:hover{background:#a16207}
 /* Historique events */
 .history-section{padding:12px 20px 16px}
 .history-title{font-size:.68rem;color:#334155;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
@@ -279,7 +280,8 @@ function buildCard(call){
   const histHTML=hist.map(h=>`<div class="history-item"><span class="history-time">${h.time}</span><span class="history-text">${h.event}</span></div>`).join('');
 
   return `<div class="call-card state-${state}">
-    <div class="card-header">
+    ${(state==='PLAYING'||state==='COLLECTING')?`<div class="ivr-active-bar"><span style="animation:blink 1s infinite">🎙</span> IVR en cours — Cliquez <strong>IVR +</strong> dans MicroSIP pour Rejouer / Passer / Arrêter</div>`:\"\"}
+  <div class="card-header">
       <div class="card-header-left">
         <div class="phone-number ${!phone?'no-phone':''}">${phone||'Numéro inconnu'}</div>
         <div class="call-meta">
@@ -295,7 +297,7 @@ function buildCard(call){
       <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
       <div class="step-names">${chipsHTML}</div>
     </div>`:''}
-    ${state==='HOLD'?`<div class="actions-section"><button class="btn-unhold" onclick="sendUnhold('${call.callId}')">▶ Reprendre l'appel</button></div>`:''}
+    ${state==='HOLD'?`<div class="actions-section"><div class="hold-instruction">⏸ Pour reprendre : cliquez sur le bouton <strong>Hold (II)</strong> dans MicroSIP</div></div>`:''}
     <div class="history-section">
       <div class="history-title">Historique</div>
       <div class="history-list">${histHTML||'<div class="history-item"><span class="history-text" style="color:#1e2a3a">Aucun événement</span></div>'}</div>
@@ -345,7 +347,6 @@ function stateLabel(s){
   return({IDLE:'Inactif',ACTIVE:'En ligne 📞',PLAYING:'Audio ▶',COLLECTING:'Saisie ⌨',HOLD:'En attente ⏸',DONE:'Terminé ✓',DROPPED:'Raccroché ✕'})[s]||s;
 }
 
-function sendUnhold(callId){fetch(`/api/unhold/${callId}`,{method:'POST'});}
 function clearHistory(){if(!confirm('Effacer tout l\'historique ?'))return;fetch('/api/history',{method:'DELETE'});}
 function ensure(id){if(!calls[id])calls[id]={callId:id,state:'ACTIVE',phone:'',phoneDisplay:'',startTime:now(),profile:null,label:null,currentStep:0,totalSteps:1,stepResults:{},history:[]};}
 function now(){return new Date().toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
