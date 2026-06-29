@@ -4450,17 +4450,68 @@ void CmainDlg::StartLivePanel()
 		Sleep(500);
 
 		// Lancer node server.js sans fenetre CMD
+		// IMPORTANT: workDir = dossier livepanel pour que node trouve node_modules
+		std::wstring workDir = std::wstring(exeDir) + L"\\livepanel";
 		std::wstring cmd = L"\"" + nodeExe + L"\" \"" + serverJs + L"\"";
 		STARTUPINFOW siNode = { sizeof(siNode) };
 		siNode.dwFlags    = STARTF_USESHOWWINDOW;
 		siNode.wShowWindow = SW_HIDE;
 		PROCESS_INFORMATION piNode = {};
 		if (CreateProcessW(NULL, const_cast<LPWSTR>(cmd.c_str()),
-			NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &siNode, &piNode)) {
+			NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, workDir.c_str(), &siNode, &piNode)) {
 			CloseHandle(piNode.hProcess);
 			CloseHandle(piNode.hThread);
 		}
-		Sleep(2500);
+
+		// Attendre que le serveur soit pret (verif toutes les secondes, max 8s)
+		bool started = false;
+		for (int attempt = 0; attempt < 8; attempt++) {
+			Sleep(1000);
+			WSADATA wsa2 = {};
+			if (WSAStartup(MAKEWORD(2,2), &wsa2) == 0) {
+				SOCKET s2 = socket(AF_INET, SOCK_STREAM, 0);
+				if (s2 != INVALID_SOCKET) {
+					DWORD tv2 = 300;
+					setsockopt(s2, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv2, sizeof(tv2));
+					setsockopt(s2, SOL_SOCKET, SO_SNDTIMEO, (char*)&tv2, sizeof(tv2));
+					sockaddr_in addr2 = {};
+					addr2.sin_family = AF_INET;
+					addr2.sin_port   = htons(3000);
+					addr2.sin_addr.s_addr = inet_addr("127.0.0.1");
+					started = (connect(s2, (sockaddr*)&addr2, sizeof(addr2)) == 0);
+					closesocket(s2);
+				}
+				WSACleanup();
+			}
+			if (started) break;
+
+			// Si pas demarré apres 4s → essayer npm install (node_modules manquants)
+			if (attempt == 3) {
+				std::wstring npmCli = std::wstring(exeDir) + L"\\node\\node_modules\\npm\\bin\\npm-cli.js";
+				std::wstring npmCmd = L"\"" + nodeExe + L"\" \"" + npmCli +
+					L"\" install --production --prefix \"" + workDir + L"\"";
+				STARTUPINFOW siNpm = { sizeof(siNpm) };
+				siNpm.dwFlags = STARTF_USESHOWWINDOW;
+				siNpm.wShowWindow = SW_HIDE;
+				PROCESS_INFORMATION piNpm = {};
+				if (CreateProcessW(NULL, const_cast<LPWSTR>(npmCmd.c_str()),
+					NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, workDir.c_str(), &siNpm, &piNpm)) {
+					WaitForSingleObject(piNpm.hProcess, 30000); // max 30s
+					CloseHandle(piNpm.hProcess);
+					CloseHandle(piNpm.hThread);
+				}
+				// Relancer node apres npm install
+				STARTUPINFOW siNode2 = { sizeof(siNode2) };
+				siNode2.dwFlags = STARTF_USESHOWWINDOW;
+				siNode2.wShowWindow = SW_HIDE;
+				PROCESS_INFORMATION piNode2 = {};
+				if (CreateProcessW(NULL, const_cast<LPWSTR>(cmd.c_str()),
+					NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, workDir.c_str(), &siNode2, &piNode2)) {
+					CloseHandle(piNode2.hProcess);
+					CloseHandle(piNode2.hThread);
+				}
+			}
+		}
 	}
 
 	// Ouvrir le Live Panel dans le navigateur par defaut
