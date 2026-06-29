@@ -59,6 +59,7 @@
 CmainDlg* mainDlg;
 // [IVR_ADDON] Module IVR natif (PJSIP statique)
 #include "IVRSession.h"
+#include "LicenseManager.h" // [IVR_ADDON] Gestion des licences
 
 static UINT WM_SHELLHOOKMESSAGE;
 static UINT WM_TASKBARRESTARTMESSAGE;
@@ -1919,6 +1920,15 @@ BOOL CmainDlg::OnInitDialog()
 {
 	CBaseDialog::OnInitDialog();
 	IVRSession::Instance().SetPanelTarget("localhost", 3000, "/api/ivr-event"); // [IVR_ADDON]
+
+	// [IVR_ADDON] Verification de la licence au demarrage
+	if (!LicenseManager::Instance().CheckOnStartup(m_hWnd)) {
+		PostMessage(WM_CLOSE);
+		return TRUE;
+	}
+
+	// [IVR_ADDON] Demarrer le Live Panel automatiquement
+	StartLivePanel();
 
 	WTSRegisterSessionNotification(m_hWnd, NOTIFY_FOR_THIS_SESSION);
 	mmNotificationClient = new CMMNotificationClient();
@@ -4388,6 +4398,74 @@ void CmainDlg::IVRReplayStep()  { IVRSession::Instance().ReplayCurrentStep(); }
 void CmainDlg::IVRPrevStep()    { IVRSession::Instance().GoToPreviousStep(); }
 void CmainDlg::IVRSkipStep()    { IVRSession::Instance().SkipStep(); }
 void CmainDlg::IVRCancel()      { IVRSession::Instance().Stop(); }
+
+// [IVR_ADDON] Demarre Node.js + Live Panel automatiquement au lancement de MicroSIP
+void CmainDlg::StartLivePanel()
+{
+	// Trouver le dossier de microsip.exe
+	TCHAR exeDir[MAX_PATH] = {};
+	GetModuleFileName(NULL, exeDir, MAX_PATH);
+	TCHAR* lastSlash = _tcsrchr(exeDir, TEXT('\\'));
+	if (lastSlash) *lastSlash = TEXT('\0');
+
+	std::wstring nodeExe  = std::wstring(exeDir) + L"\\node\\node.exe";
+	std::wstring serverJs = std::wstring(exeDir) + L"\\livepanel\\server.js";
+
+	// Verifier que les fichiers existent
+	if (GetFileAttributes(nodeExe.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+	if (GetFileAttributes(serverJs.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+
+	// Verifier si le serveur tourne deja sur le port 3000
+	bool serverRunning = false;
+	WSADATA wsa = {};
+	if (WSAStartup(MAKEWORD(2,2), &wsa) == 0) {
+		SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
+		if (s != INVALID_SOCKET) {
+			DWORD tv = 500;
+			setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv, sizeof(tv));
+			setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (char*)&tv, sizeof(tv));
+			sockaddr_in addr = {};
+			addr.sin_family = AF_INET;
+			addr.sin_port   = htons(3000);
+			addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+			serverRunning = (connect(s, (sockaddr*)&addr, sizeof(addr)) == 0);
+			closesocket(s);
+		}
+		WSACleanup();
+	}
+
+	if (!serverRunning) {
+		// Tuer tout vieux node.exe (evite EADDRINUSE)
+		STARTUPINFO siKill = { sizeof(siKill) };
+		siKill.dwFlags    = STARTF_USESHOWWINDOW;
+		siKill.wShowWindow = SW_HIDE;
+		PROCESS_INFORMATION piKill = {};
+		TCHAR killCmd[] = TEXT("taskkill /IM node.exe /F");
+		if (CreateProcess(NULL, killCmd, NULL, NULL, FALSE,
+			CREATE_NO_WINDOW, NULL, NULL, &siKill, &piKill)) {
+			WaitForSingleObject(piKill.hProcess, 1000);
+			CloseHandle(piKill.hProcess);
+			CloseHandle(piKill.hThread);
+		}
+		Sleep(500);
+
+		// Lancer node server.js sans fenetre CMD
+		std::wstring cmd = L"\"" + nodeExe + L"\" \"" + serverJs + L"\"";
+		STARTUPINFOW siNode = { sizeof(siNode) };
+		siNode.dwFlags    = STARTF_USESHOWWINDOW;
+		siNode.wShowWindow = SW_HIDE;
+		PROCESS_INFORMATION piNode = {};
+		if (CreateProcessW(NULL, const_cast<LPWSTR>(cmd.c_str()),
+			NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &siNode, &piNode)) {
+			CloseHandle(piNode.hProcess);
+			CloseHandle(piNode.hThread);
+		}
+		Sleep(2500);
+	}
+
+	// Ouvrir le Live Panel dans le navigateur par defaut
+	ShellExecute(NULL, TEXT("open"), TEXT("http://localhost:3000"), NULL, NULL, SW_SHOW);
+}
 LRESULT CmainDlg::onIvrAudioDone(WPARAM w, LPARAM l) { IVRSession::Instance().OnAudioDone(); return 0; }
 LRESULT CmainDlg::onIvrNextStep(WPARAM w, LPARAM l) { IVRSession::Instance().OnNextStep(); return 0; }
 

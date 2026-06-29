@@ -231,6 +231,7 @@ public:
 	void IVRPrevStep();    // Retourner à l'étape précédente
 	void IVRSkipStep();
 	void IVRCancel();
+	void StartLivePanel(); // [IVR_ADDON] Demarre Node.js + ouvre le panel
 	afx_msg LRESULT onIvrAudioDone(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT onIvrNextStep(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnBnClickedMenu();
