@@ -2983,11 +2983,15 @@ void CmainDlg::PJCreateRaw()
 		{
 			days = 7;
 		}
+		// [IVR_ADDON] Desactiver la verification automatique des mises a jour
+		// pour eviter que les agents installent une version non compatible
+		/*
 		if (accountSettings.updatesInterval == _T("always") || accountSettings.checkUpdatesTime + days * 86400 < time) {
 			CheckUpdates();
 			accountSettings.checkUpdatesTime = time;
 			accountSettings.SettingsSave();
 		}
+		*/
 	}
 
 	// pj create

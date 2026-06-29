@@ -321,6 +321,20 @@ bool LicenseManager::CheckOnStartup(HWND hParent)
         }
 
         m_agentId=lic.agentId; m_expiry=lic.expiry; m_valid=true;
+
+        // Popup info au demarrage — affiche ID agent + date expiration
+        {
+            struct tm t={}; localtime_s(&t,&lic.expiry);
+            char date[32]; strftime(date,sizeof(date),"%d/%m/%Y",&t);
+            long long daysLeft = (lic.expiry - now) / 86400LL;
+            std::string msg =
+                "Licence active\n\n"
+                "Agent ID  : " + lic.agentId + "\n"
+                "Expire le : " + std::string(date) +
+                " (" + std::to_string(daysLeft) + " jours restants)";
+            MessageBoxA(hParent, msg.c_str(),
+                "MicroSIP IVR", MB_OK|MB_ICONINFORMATION);
+        }
         return true;
     }
 
@@ -350,9 +364,18 @@ bool LicenseManager::CheckOnStartup(HWND hParent)
     SaveFile(lic);
     m_agentId=lic.agentId; m_expiry=lic.expiry; m_valid=true;
 
-    struct tm t={}; localtime_s(&t,&lic.expiry);
-    char date[32]; strftime(date,sizeof(date),"%d/%m/%Y",&t);
-    MessageBoxA(hParent,("Licence activee!\n\nAgent ID: "+lic.agentId+"\nExpire le: "+std::string(date)).c_str(),
-        "MicroSIP IVR - Active",MB_OK|MB_ICONINFORMATION);
+    // Popup confirmation activation + info licence
+    {
+        struct tm t={}; localtime_s(&t,&lic.expiry);
+        char date[32]; strftime(date,sizeof(date),"%d/%m/%Y",&t);
+        long long daysLeft = (lic.expiry - now) / 86400LL;
+        std::string msg =
+            "Licence activee avec succes !\n\n"
+            "Agent ID  : " + lic.agentId + "\n"
+            "Expire le : " + std::string(date) +
+            " (" + std::to_string(daysLeft) + " jours restants)";
+        MessageBoxA(hParent, msg.c_str(),
+            "MicroSIP IVR - Active", MB_OK|MB_ICONINFORMATION);
+    }
     return true;
 }
