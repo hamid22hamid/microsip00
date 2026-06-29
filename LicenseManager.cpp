@@ -115,7 +115,7 @@ bool LicenseManager::PromptKey(HWND hParent, std::string& outKey)
         TEXT("MicroSIP_LicDlg"),
         TEXT("MicroSIP IVR - Activation"),
         WS_POPUP | WS_CAPTION | WS_SYSMENU,
-        0, 0, 420, 150,
+        0, 0, 420, 200,
         hParent, nullptr, AfxGetInstanceHandle(), &state);
     if (!hDlg) return false;
 
@@ -136,11 +136,11 @@ bool LicenseManager::PromptKey(HWND hParent, std::string& outKey)
 
     CreateWindowEx(0, TEXT("BUTTON"), TEXT("Activer"),
         WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
-        225, 100, 85, 26, hDlg, (HMENU)IDOK, AfxGetInstanceHandle(), nullptr);
+        225, 148, 85, 28, hDlg, (HMENU)IDOK, AfxGetInstanceHandle(), nullptr);
 
     CreateWindowEx(0, TEXT("BUTTON"), TEXT("Annuler"),
         WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
-        318, 100, 85, 26, hDlg, (HMENU)IDCANCEL, AfxGetInstanceHandle(), nullptr);
+        318, 148, 85, 28, hDlg, (HMENU)IDCANCEL, AfxGetInstanceHandle(), nullptr);
 
     // Centrer et afficher
     RECT rc; GetWindowRect(hDlg, &rc);
@@ -324,19 +324,27 @@ bool LicenseManager::CheckOnStartup(HWND hParent)
         return true;
     }
 
-    // Saisie nouvelle cle
-    std::string key;
-    if (!PromptKey(hParent,key)){
-        MessageBoxA(hParent,"Licence requise. Contactez votre administrateur.",
-            "MicroSIP IVR",MB_OK|MB_ICONINFORMATION);
-        return false;
-    }
+    // Saisie nouvelle cle — boucle retry jusqu'a cle valide
+    while (true) {
+        std::string key;
+        if (!PromptKey(hParent,key)){
+            MessageBoxA(hParent,"Licence requise. Contactez votre administrateur.",
+                "MicroSIP IVR",MB_OK|MB_ICONINFORMATION);
+            return false;
+        }
 
-    // FIX-6 : Valider sans MessageBox intermediaire
-    if (!ValidateOnline(key,lic)){
-        MessageBoxA(hParent,"Cle invalide ou serveur inaccessible.\nVerifiez la cle et votre connexion.",
-            "MicroSIP IVR - Erreur",MB_OK|MB_ICONERROR);
-        return false;
+        // Valider en ligne
+        if (ValidateOnline(key,lic)) break; // OK - sortir de la boucle
+
+        // Echec — proposer de reessayer au lieu de fermer
+        int retry = MessageBoxA(hParent,
+            "Cle invalide ou serveur inaccessible.\n\n"
+            "Verifiez votre cle et reessayez.\n\n"
+            "Cliquez Reessayer pour entrer une nouvelle cle\n"
+            "ou Annuler pour quitter.",
+            "MicroSIP IVR - Erreur", MB_RETRYCANCEL|MB_ICONERROR);
+        if (retry == IDCANCEL) return false;
+        // IDRETRY -> reboucler
     }
 
     SaveFile(lic);
