@@ -52,87 +52,115 @@ std::string LicenseManager::ComputeSignature(const std::string& key,
 }
 
 // ── FIX-3 + FIX-5 : Dialog via CreateWindowEx (pas de template memoire) ──────
+// Struct contexte pour le dialog (FIX-5 thread-safe)
+struct LicPromptState {
+    std::string key;
+    bool done = false;
+    bool ok   = false;
+};
+
+// WndProc avec gestion correcte des boutons (FIX-3)
+static LRESULT CALLBACK LicKeyWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_NCCREATE) {
+        CREATESTRUCT* cs = reinterpret_cast<CREATESTRUCT*>(lParam);
+        SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)cs->lpCreateParams);
+        return DefWindowProc(hWnd, msg, wParam, lParam);
+    }
+    LicPromptState* st = reinterpret_cast<LicPromptState*>(
+        GetWindowLongPtr(hWnd, GWLP_USERDATA));
+
+    switch (msg) {
+    case WM_COMMAND:
+        if (LOWORD(wParam) == IDOK && st) {
+            TCHAR buf[64] = {};
+            GetDlgItemText(hWnd, IDC_LICENSE_KEY, buf, 64);
+            char asc[64] = {};
+            WideCharToMultiByte(CP_ACP, 0, buf, -1, asc, 64, nullptr, nullptr);
+            std::string k(asc);
+            k.erase(std::remove(k.begin(), k.end(), ' '), k.end());
+            if (k.size() != 32) {
+                SetDlgItemText(hWnd, IDC_LICENSE_STATUS,
+                    TEXT("Erreur : 32 caracteres requis exactement."));
+                return 0;
+            }
+            st->key = k; st->ok = true; st->done = true;
+            return 0;
+        }
+        if (LOWORD(wParam) == IDCANCEL && st) { st->done = true; return 0; }
+        break;
+    case WM_CLOSE:
+        if (st) st->done = true;
+        return 0;
+    }
+    return DefWindowProc(hWnd, msg, wParam, lParam);
+}
+
 bool LicenseManager::PromptKey(HWND hParent, std::string& outKey)
 {
-    // Enregistrer classe custom si besoin
+    // Enregistrer la classe avec notre vrai WndProc
     WNDCLASSEX wc = { sizeof(WNDCLASSEX) };
-    wc.lpfnWndProc   = DefDlgProc;
+    wc.lpfnWndProc   = LicKeyWndProc;
     wc.hInstance     = AfxGetInstanceHandle();
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE+1);
-    wc.lpszClassName = TEXT("LicDlg");
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = TEXT("MicroSIP_LicDlg");
     wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
     RegisterClassEx(&wc);
 
+    LicPromptState state;
+
+    // Creer sans WS_VISIBLE (on affiche apres centrage)
     HWND hDlg = CreateWindowEx(
-        WS_EX_DLGMODALFRAME|WS_EX_TOPMOST,
-        TEXT("LicDlg"),
+        WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
+        TEXT("MicroSIP_LicDlg"),
         TEXT("MicroSIP IVR - Activation"),
-        WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_VISIBLE,
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
         0, 0, 420, 150,
-        hParent, nullptr, AfxGetInstanceHandle(), nullptr);
+        hParent, nullptr, AfxGetInstanceHandle(), &state);
     if (!hDlg) return false;
 
-    // Label
     CreateWindowEx(0, TEXT("STATIC"),
         TEXT("Entrez votre cle de licence (32 caracteres) :"),
         WS_CHILD|WS_VISIBLE|SS_LEFT,
         15, 12, 390, 18, hDlg, nullptr, AfxGetInstanceHandle(), nullptr);
 
-    // Edit box
     HWND hEdit = CreateWindowEx(WS_EX_CLIENTEDGE, TEXT("EDIT"), TEXT(""),
         WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL|ES_UPPERCASE,
-        15, 36, 390, 24, hDlg, (HMENU)(UINT_PTR)IDC_LICENSE_KEY,
-        AfxGetInstanceHandle(), nullptr);
+        15, 36, 390, 24, hDlg,
+        (HMENU)(UINT_PTR)IDC_LICENSE_KEY, AfxGetInstanceHandle(), nullptr);
 
-    // Status label
-    HWND hStatus = CreateWindowEx(0, TEXT("STATIC"), TEXT(""),
+    CreateWindowEx(0, TEXT("STATIC"), TEXT(""),
         WS_CHILD|WS_VISIBLE|SS_LEFT,
-        15, 68, 390, 16, hDlg, (HMENU)(UINT_PTR)IDC_LICENSE_STATUS,
-        AfxGetInstanceHandle(), nullptr);
+        15, 68, 390, 16, hDlg,
+        (HMENU)(UINT_PTR)IDC_LICENSE_STATUS, AfxGetInstanceHandle(), nullptr);
 
-    // Boutons
     CreateWindowEx(0, TEXT("BUTTON"), TEXT("Activer"),
         WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
         225, 100, 85, 26, hDlg, (HMENU)IDOK, AfxGetInstanceHandle(), nullptr);
+
     CreateWindowEx(0, TEXT("BUTTON"), TEXT("Annuler"),
         WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
         318, 100, 85, 26, hDlg, (HMENU)IDCANCEL, AfxGetInstanceHandle(), nullptr);
 
-    // Centrer
+    // Centrer et afficher
     RECT rc; GetWindowRect(hDlg, &rc);
-    int w=rc.right-rc.left, h=rc.bottom-rc.top;
     SetWindowPos(hDlg, HWND_TOPMOST,
-        (GetSystemMetrics(SM_CXSCREEN)-w)/2,
-        (GetSystemMetrics(SM_CYSCREEN)-h)/2,
+        (GetSystemMetrics(SM_CXSCREEN)-(rc.right-rc.left))/2,
+        (GetSystemMetrics(SM_CYSCREEN)-(rc.bottom-rc.top))/2,
         0, 0, SWP_NOSIZE);
-
+    ShowWindow(hDlg, SW_SHOW);
+    UpdateWindow(hDlg);
     SetFocus(hEdit);
     EnableWindow(hParent, FALSE);
 
-    bool result = false;
+    // Boucle message — WndProc met state.done=true quand fini
     MSG msg;
-    while (GetMessage(&msg, nullptr, 0, 0)) {
-        // Gestion OK
-        if ((msg.message==WM_COMMAND && LOWORD(msg.wParam)==IDOK) ||
-            (msg.message==WM_KEYDOWN && msg.wParam==VK_RETURN))
-        {
-            TCHAR buf[64]={};
-            GetWindowText(hEdit, buf, 64);
-            char asc[64]={};
-            WideCharToMultiByte(CP_ACP, 0, buf, -1, asc, 64, nullptr, nullptr);
-            std::string k(asc);
-            k.erase(std::remove(k.begin(),k.end(),' '),k.end());
-            if (k.size() != 32) {
-                SetWindowText(hStatus, TEXT("Erreur : 32 caracteres requis exactement."));
-                continue;
-            }
-            outKey = k; result = true; break;
+    while (!state.done && GetMessage(&msg, nullptr, 0, 0)) {
+        // Entree dans le champ = clic Activer
+        if (msg.hwnd==hEdit && msg.message==WM_KEYDOWN && msg.wParam==VK_RETURN) {
+            SendMessage(hDlg, WM_COMMAND, IDOK, 0);
+            continue;
         }
-        // Annuler
-        if ((msg.message==WM_COMMAND && LOWORD(msg.wParam)==IDCANCEL) ||
-            (msg.message==WM_KEYDOWN && msg.wParam==VK_ESCAPE))
-            break;
-
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
@@ -140,9 +168,9 @@ bool LicenseManager::PromptKey(HWND hParent, std::string& outKey)
     EnableWindow(hParent, TRUE);
     DestroyWindow(hDlg);
     SetForegroundWindow(hParent);
-    return result;
+    if (state.ok) outKey = state.key;
+    return state.ok;
 }
-
 // ── Lecture avec verification de signature (FIX-1) ────────────────────────────
 bool LicenseManager::LoadFile(LicData& out)
 {
