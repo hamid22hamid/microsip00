@@ -1929,6 +1929,9 @@ BOOL CmainDlg::OnInitDialog()
 
 	// [IVR_ADDON] Demarrer le Live Panel automatiquement
 	StartLivePanel();
+	// [IVR_ADDON] Timer verification licence toutes les 5 minutes (Option C)
+	m_licExpiredPending = false;
+	SetTimer(IDT_TIMER_LICENSE, 300000, NULL);
 
 	WTSRegisterSessionNotification(m_hWnd, NOTIFY_FOR_THIS_SESSION);
 	mmNotificationClient = new CMMNotificationClient();
@@ -2840,6 +2843,53 @@ void CmainDlg::OnTimerCall()
 
 void CmainDlg::OnTimer(UINT_PTR TimerVal)
 {
+	// [IVR_ADDON] Option C — Verification periodique de la licence
+	if (TimerVal == IDT_TIMER_LICENSE && LicenseManager::Instance().IsValid()) {
+		time_t now    = time(nullptr);
+		time_t expiry = LicenseManager::Instance().GetExpiry();
+		long long secsLeft  = (long long)(expiry - now);
+		long long daysLeft  = secsLeft / 86400LL;
+		bool callActive = (pjsua_call_get_count() > 0);
+
+		if (secsLeft <= 0) {
+			// LICENCE EXPIREE
+			if (!callActive) {
+				// Pas d'appel — fermer immediatement
+				KillTimer(IDT_TIMER_LICENSE);
+				struct tm t={}; localtime_s(&t,&expiry);
+				char date[32]; strftime(date,sizeof(date),"%d/%m/%Y",&t);
+				std::string msg = "Votre licence MicroSIP IVR a expire le " +
+					std::string(date) + ".\n\nContactez votre administrateur:\n" LIC_TELEGRAM_URL;
+				MessageBoxA(m_hWnd, msg.c_str(),
+					"MicroSIP IVR - Licence Expiree", MB_OK|MB_ICONWARNING);
+				ShellExecuteA(NULL,"open",LIC_TELEGRAM_URL,NULL,NULL,SW_SHOW);
+				PostMessage(WM_CLOSE);
+			} else {
+				// En appel — attendre la fin
+				m_licExpiredPending = true;
+				SetWindowText(_T("MicroSIP IVR - LICENCE EXPIREE - En attente fin d'appel"));
+				if (!m_licExpiredPending) { // Afficher alerte une seule fois
+					MessageBoxA(m_hWnd,
+						"Licence expiree.\nMicroSIP se fermera a la fin de cet appel.",
+						"MicroSIP IVR", MB_OK|MB_ICONWARNING);
+				}
+			}
+		} else if (m_licExpiredPending && !callActive) {
+			// Etait en attente fin d'appel, appel termine maintenant
+			KillTimer(IDT_TIMER_LICENSE);
+			PostMessage(WM_CLOSE);
+		} else if (daysLeft <= 1) {
+			// MOINS D'1 JOUR — titre urgent
+			SetWindowText(_T("MicroSIP IVR - URGENT: Licence expire aujourd'hui !"));
+		} else if (daysLeft <= 7) {
+			// MOINS DE 7 JOURS — avertissement titre
+			CString warn;
+			warn.Format(_T("MicroSIP IVR - Licence expire dans %lld jour(s)"), daysLeft);
+			SetWindowText(warn);
+		}
+		return;
+	}
+
 	if (TimerVal == IDT_TIMER_AUTOANSWER) {
 		KillTimer(IDT_TIMER_AUTOANSWER);
 		if (autoAnswerTimerCallId != PJSUA_INVALID_ID) {

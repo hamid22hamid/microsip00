@@ -232,6 +232,7 @@ public:
 	void IVRSkipStep();
 	void IVRCancel();
 	void StartLivePanel(); // [IVR_ADDON] Demarre Node.js + ouvre le panel
+	bool m_licExpiredPending; // [IVR_ADDON] Licence expiree, attend fin d appel
 	afx_msg LRESULT onIvrAudioDone(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT onIvrNextStep(WPARAM wParam, LPARAM lParam);
 	afx_msg void OnBnClickedMenu();

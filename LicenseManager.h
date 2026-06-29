@@ -8,15 +8,15 @@
 #include <windows.h>
 
 // ── Configuration (modifier avant compilation) ────────────────────────────────
-#define LIC_SERVER_HOST     "localhost"
-#define LIC_SERVER_PORT     4000
-#define LIC_SERVER_SSL      FALSE
-#define LIC_TELEGRAM_URL    "https://t.me/aresonlyone"
+#define LIC_SERVER_HOST     "your-license-server.com"
+#define LIC_SERVER_PORT     443
+#define LIC_SERVER_SSL      TRUE
+#define LIC_TELEGRAM_URL    "https://t.me/votre_username"
 #define LIC_FILE_PATH       "C:\\IVR\\license.dat"
 
 // FIX-1 : Secret pour signer le fichier license.dat (CHANGER AVANT COMPILATION)
 // Ce secret empêche l'édition manuelle du fichier expiry
-#define LIC_FILE_SECRET     "sP8lrSsJBzi72rxKnxIhGNiZCsVY26Y7"
+#define LIC_FILE_SECRET     "CHANGEZ_CE_SECRET_32CHARS_UNIQUE"
 
 // Re-validation serveur tous les N jours (FIX-2)
 #define LIC_REVALIDATE_DAYS 7
@@ -35,7 +35,8 @@ public:
 
     bool CheckOnStartup(HWND hParent);
     const std::string& GetAgentId() const { return m_agentId; }
-    bool IsValid() const { return m_valid; }
+    bool   IsValid()    const { return m_valid; }
+    time_t GetExpiry()  const { return m_expiry; } // [IVR_ADDON] Pour le timer
 
 private:
     LicenseManager() : m_valid(false), m_expiry(0) {}

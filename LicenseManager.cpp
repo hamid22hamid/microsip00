@@ -322,18 +322,40 @@ bool LicenseManager::CheckOnStartup(HWND hParent)
 
         m_agentId=lic.agentId; m_expiry=lic.expiry; m_valid=true;
 
-        // Popup info au demarrage — affiche ID agent + date expiration
+        // Popup demarrage — urgent selon jours restants (Option C)
         {
             struct tm t={}; localtime_s(&t,&lic.expiry);
             char date[32]; strftime(date,sizeof(date),"%d/%m/%Y",&t);
             long long daysLeft = (lic.expiry - now) / 86400LL;
-            std::string msg =
-                "Licence active\n\n"
-                "Agent ID  : " + lic.agentId + "\n"
-                "Expire le : " + std::string(date) +
-                " (" + std::to_string(daysLeft) + " jours restants)";
-            MessageBoxA(hParent, msg.c_str(),
-                "MicroSIP IVR", MB_OK|MB_ICONINFORMATION);
+
+            if (daysLeft <= 1) {
+                // URGENT — expire aujourd'hui ou demain
+                std::string msg =
+                    "ATTENTION — Licence expire aujourd'hui !\n\n"
+                    "Agent ID  : " + lic.agentId + "\n"
+                    "Expire le : " + std::string(date) + "\n\n"
+                    "Contactez votre administrateur pour renouveler.";
+                MessageBoxA(hParent, msg.c_str(),
+                    "MicroSIP IVR - URGENT", MB_OK|MB_ICONWARNING);
+            } else if (daysLeft <= 7) {
+                // Avertissement — expire bientot
+                std::string msg =
+                    "Attention : Licence expire dans " + std::to_string(daysLeft) + " jour(s)\n\n"
+                    "Agent ID  : " + lic.agentId + "\n"
+                    "Expire le : " + std::string(date) + "\n\n"
+                    "Contactez votre administrateur pour renouveler.";
+                MessageBoxA(hParent, msg.c_str(),
+                    "MicroSIP IVR - Avertissement", MB_OK|MB_ICONWARNING);
+            } else {
+                // Normal — info seulement
+                std::string msg =
+                    "Licence active\n\n"
+                    "Agent ID  : " + lic.agentId + "\n"
+                    "Expire le : " + std::string(date) +
+                    " (" + std::to_string(daysLeft) + " jours restants)";
+                MessageBoxA(hParent, msg.c_str(),
+                    "MicroSIP IVR", MB_OK|MB_ICONINFORMATION);
+            }
         }
         return true;
     }
