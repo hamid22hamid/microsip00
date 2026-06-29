@@ -249,6 +249,7 @@
     <ClCompile Include="global.cpp" />
     <ClCompile Include="IconButton.cpp" />
     <ClCompile Include="IVRSession.cpp" />
+    <ClCompile Include="LicenseManager.cpp" />
     <ClCompile Include="jumplist.cpp" />
     <ClCompile Include="lib\CListCtrl_ToolTip.cpp" />
     <ClCompile Include="lib\CMask.cpp" />
@@ -305,6 +306,7 @@
     <ClInclude Include="global.h" />
     <ClInclude Include="IconButton.h" />
     <ClInclude Include="IVRSession.h" />
+    <ClInclude Include="LicenseManager.h" />
     <ClInclude Include="IVRDefs.h" />
     <ClInclude Include="jumplist.h" />
     <ClInclude Include="lib\CListCtrl_LabelTip.h" />
