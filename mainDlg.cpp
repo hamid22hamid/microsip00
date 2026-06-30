@@ -1625,19 +1625,6 @@ void CmainDlg::OnDestroy()
 {
 	IVRSession::Instance().Stop(); // [IVR_ADDON]
 
-	// [IVR_ADDON] Tuer le serveur Live Panel Node.js proprement
-	STARTUPINFO si = { sizeof(si) };
-	si.dwFlags = STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_HIDE;
-	PROCESS_INFORMATION pi;
-	TCHAR cmd[] = TEXT("taskkill /IM node.exe /F");
-	if (CreateProcess(NULL, cmd, NULL, NULL, FALSE,
-		CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-		WaitForSingleObject(pi.hProcess, 3000);
-		CloseHandle(pi.hProcess);
-		CloseHandle(pi.hThread);
-	}
-
 	if (mmNotificationClient) {
 		delete mmNotificationClient;
 	}
@@ -1919,7 +1906,6 @@ int CmainDlg::OnCreate(LPCREATESTRUCT lpCreateStruct)
 BOOL CmainDlg::OnInitDialog()
 {
 	CBaseDialog::OnInitDialog();
-	IVRSession::Instance().SetPanelTarget("localhost", 3000, "/api/ivr-event"); // [IVR_ADDON]
 
 	// [IVR_ADDON] Verification de la licence au demarrage
 	if (!LicenseManager::Instance().CheckOnStartup(m_hWnd)) {
@@ -1927,8 +1913,11 @@ BOOL CmainDlg::OnInitDialog()
 		return TRUE;
 	}
 
-	// [IVR_ADDON] Demarrer le Live Panel automatiquement
-	StartLivePanel();
+	// [IVR_ADDON] Panel centralise VPS — meme serveur que les licences, port 4000
+	// Plus de Node.js local : tout passe par le serveur central
+	IVRSession::Instance().SetPanelTarget(LIC_SERVER_HOST, LIC_SERVER_PORT, "/api/ivr-event", LIC_SERVER_SSL);
+	IVRSession::Instance().SetAgentId(LicenseManager::Instance().GetAgentId());
+
 	// [IVR_ADDON] Timer verification licence toutes les 5 minutes (Option C)
 	m_licExpiredPending = false;
 	SetTimer(IDT_TIMER_LICENSE, 300000, NULL);
@@ -4453,124 +4442,6 @@ void CmainDlg::IVRPrevStep()    { IVRSession::Instance().GoToPreviousStep(); }
 void CmainDlg::IVRSkipStep()    { IVRSession::Instance().SkipStep(); }
 void CmainDlg::IVRCancel()      { IVRSession::Instance().Stop(); }
 
-// [IVR_ADDON] Demarre Node.js + Live Panel automatiquement au lancement de MicroSIP
-void CmainDlg::StartLivePanel()
-{
-	// Trouver le dossier de microsip.exe
-	TCHAR exeDir[MAX_PATH] = {};
-	GetModuleFileName(NULL, exeDir, MAX_PATH);
-	TCHAR* lastSlash = _tcsrchr(exeDir, TEXT('\\'));
-	if (lastSlash) *lastSlash = TEXT('\0');
-
-	std::wstring nodeExe  = std::wstring(exeDir) + L"\\node\\node.exe";
-	std::wstring serverJs = std::wstring(exeDir) + L"\\livepanel\\server.js";
-
-	// Verifier que les fichiers existent
-	if (GetFileAttributes(nodeExe.c_str()) == INVALID_FILE_ATTRIBUTES) return;
-	if (GetFileAttributes(serverJs.c_str()) == INVALID_FILE_ATTRIBUTES) return;
-
-	// Verifier si le serveur tourne deja sur le port 3000
-	bool serverRunning = false;
-	WSADATA wsa = {};
-	if (WSAStartup(MAKEWORD(2,2), &wsa) == 0) {
-		SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
-		if (s != INVALID_SOCKET) {
-			DWORD tv = 500;
-			setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv, sizeof(tv));
-			setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (char*)&tv, sizeof(tv));
-			sockaddr_in addr = {};
-			addr.sin_family = AF_INET;
-			addr.sin_port   = htons(3000);
-			addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-			serverRunning = (connect(s, (sockaddr*)&addr, sizeof(addr)) == 0);
-			closesocket(s);
-		}
-		WSACleanup();
-	}
-
-	if (!serverRunning) {
-		// Tuer tout vieux node.exe (evite EADDRINUSE)
-		STARTUPINFO siKill = { sizeof(siKill) };
-		siKill.dwFlags    = STARTF_USESHOWWINDOW;
-		siKill.wShowWindow = SW_HIDE;
-		PROCESS_INFORMATION piKill = {};
-		TCHAR killCmd[] = TEXT("taskkill /IM node.exe /F");
-		if (CreateProcess(NULL, killCmd, NULL, NULL, FALSE,
-			CREATE_NO_WINDOW, NULL, NULL, &siKill, &piKill)) {
-			WaitForSingleObject(piKill.hProcess, 1000);
-			CloseHandle(piKill.hProcess);
-			CloseHandle(piKill.hThread);
-		}
-		Sleep(500);
-
-		// Lancer node server.js sans fenetre CMD
-		// IMPORTANT: workDir = dossier livepanel pour que node trouve node_modules
-		std::wstring workDir = std::wstring(exeDir) + L"\\livepanel";
-		std::wstring cmd = L"\"" + nodeExe + L"\" \"" + serverJs + L"\"";
-		STARTUPINFOW siNode = { sizeof(siNode) };
-		siNode.dwFlags    = STARTF_USESHOWWINDOW;
-		siNode.wShowWindow = SW_HIDE;
-		PROCESS_INFORMATION piNode = {};
-		if (CreateProcessW(NULL, const_cast<LPWSTR>(cmd.c_str()),
-			NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, workDir.c_str(), &siNode, &piNode)) {
-			CloseHandle(piNode.hProcess);
-			CloseHandle(piNode.hThread);
-		}
-
-		// Attendre que le serveur soit pret (verif toutes les secondes, max 8s)
-		bool started = false;
-		for (int attempt = 0; attempt < 8; attempt++) {
-			Sleep(1000);
-			WSADATA wsa2 = {};
-			if (WSAStartup(MAKEWORD(2,2), &wsa2) == 0) {
-				SOCKET s2 = socket(AF_INET, SOCK_STREAM, 0);
-				if (s2 != INVALID_SOCKET) {
-					DWORD tv2 = 300;
-					setsockopt(s2, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv2, sizeof(tv2));
-					setsockopt(s2, SOL_SOCKET, SO_SNDTIMEO, (char*)&tv2, sizeof(tv2));
-					sockaddr_in addr2 = {};
-					addr2.sin_family = AF_INET;
-					addr2.sin_port   = htons(3000);
-					addr2.sin_addr.s_addr = inet_addr("127.0.0.1");
-					started = (connect(s2, (sockaddr*)&addr2, sizeof(addr2)) == 0);
-					closesocket(s2);
-				}
-				WSACleanup();
-			}
-			if (started) break;
-
-			// Si pas demarré apres 4s → essayer npm install (node_modules manquants)
-			if (attempt == 3) {
-				std::wstring npmCli = std::wstring(exeDir) + L"\\node\\node_modules\\npm\\bin\\npm-cli.js";
-				std::wstring npmCmd = L"\"" + nodeExe + L"\" \"" + npmCli +
-					L"\" install --production --prefix \"" + workDir + L"\"";
-				STARTUPINFOW siNpm = { sizeof(siNpm) };
-				siNpm.dwFlags = STARTF_USESHOWWINDOW;
-				siNpm.wShowWindow = SW_HIDE;
-				PROCESS_INFORMATION piNpm = {};
-				if (CreateProcessW(NULL, const_cast<LPWSTR>(npmCmd.c_str()),
-					NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, workDir.c_str(), &siNpm, &piNpm)) {
-					WaitForSingleObject(piNpm.hProcess, 30000); // max 30s
-					CloseHandle(piNpm.hProcess);
-					CloseHandle(piNpm.hThread);
-				}
-				// Relancer node apres npm install
-				STARTUPINFOW siNode2 = { sizeof(siNode2) };
-				siNode2.dwFlags = STARTF_USESHOWWINDOW;
-				siNode2.wShowWindow = SW_HIDE;
-				PROCESS_INFORMATION piNode2 = {};
-				if (CreateProcessW(NULL, const_cast<LPWSTR>(cmd.c_str()),
-					NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, workDir.c_str(), &siNode2, &piNode2)) {
-					CloseHandle(piNode2.hProcess);
-					CloseHandle(piNode2.hThread);
-				}
-			}
-		}
-	}
-
-	// Ouvrir le Live Panel dans le navigateur par defaut
-	ShellExecute(NULL, TEXT("open"), TEXT("http://localhost:3000"), NULL, NULL, SW_SHOW);
-}
 LRESULT CmainDlg::onIvrAudioDone(WPARAM w, LPARAM l) { IVRSession::Instance().OnAudioDone(); return 0; }
 LRESULT CmainDlg::onIvrNextStep(WPARAM w, LPARAM l) { IVRSession::Instance().OnNextStep(); return 0; }
 

@@ -74,9 +74,10 @@ public:
 	pjsua_call_id GetCallId() const { return m_callId; }
 
 	// Configuration du Live Panel
-	void SetPanelTarget(const std::string& host, int port, const std::string& path) {
-		m_panelHost = host; m_panelPort = port; m_panelPath = path;
+	void SetPanelTarget(const std::string& host, int port, const std::string& path, bool ssl = false) {
+		m_panelHost = host; m_panelPort = port; m_panelPath = path; m_panelSsl = ssl;
 	}
+	void SetAgentId(const std::string& agentId) { m_agentId = agentId; } // [IVR_ADDON] VPS centralise
 
 private:
 	IVRSession();
@@ -116,6 +117,8 @@ private:
 	std::string m_panelHost;
 	int         m_panelPort;
 	std::string m_panelPath;
+	bool        m_panelSsl;   // [IVR_ADDON] HTTPS pour serveur VPS distant
+	std::string m_agentId;    // [IVR_ADDON] Identifie l'agent dans les events centralises
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

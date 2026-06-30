@@ -20,7 +20,7 @@ extern CmainDlg* mainDlg;
 // ─── Constantes ───────────────────────────────────────────────────────────────
 static const int IVR_MAX_DIGITS      = 16;    // [FIX-7]
 static const int IVR_HTTP_TIMEOUT_MS = 2000;  // [FIX-2]
-static const int IVR_AUTO_HANGUP_SEC = 600;   // [FIX-4] 10 min
+static const int IVR_AUTO_HANGUP_SEC = 1200;  // 20 min
 
 // ─── Profils ──────────────────────────────────────────────────────────────────
 IVRProfile IVR_MakeProfileEcole()
@@ -99,6 +99,7 @@ IVRSession::IVRSession()
 	, m_panelHost("localhost")
 	, m_panelPort(3000)
 	, m_panelPath("/api/ivr-event")
+	, m_panelSsl(false)
 	, m_pendingHold(false)
 {}
 
@@ -509,23 +510,25 @@ void IVRSession::TransitionTo(IVRState s)
 }
 
 // ─── HTTP fire-and-forget avec timeout 2s [FIX-2] ────────────────────────────
-struct IVRHttpJob { std::string host, path, body; int port; };
+struct IVRHttpJob { std::string host, path, body; int port; bool ssl; };
 
 static unsigned __stdcall IVR_HttpThreadProc(void* arg)
 {
 	IVRHttpJob* job = (IVRHttpJob*)arg;
 	std::wstring wh(job->host.begin(), job->host.end());
 	std::wstring wp(job->path.begin(), job->path.end());
+	// [IVR_ADDON] NO_PROXY bypass VPN agents (meme fix que LicenseManager)
 	HINTERNET hS = WinHttpOpen(L"MicroSIP-IVR/1.0",
-		WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+		WINHTTP_ACCESS_TYPE_NO_PROXY,
 		WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
 	if (hS) {
 		DWORD to = IVR_HTTP_TIMEOUT_MS;
 		WinHttpSetTimeouts(hS, to, to, to, to);
 		HINTERNET hC = WinHttpConnect(hS, wh.c_str(), (INTERNET_PORT)job->port, 0);
 		if (hC) {
+			DWORD flags = job->ssl ? WINHTTP_FLAG_SECURE : 0;
 			HINTERNET hR = WinHttpOpenRequest(hC, L"POST", wp.c_str(),
-				NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+				NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
 			if (hR) {
 				WinHttpAddRequestHeaders(hR,
 					L"Content-Type: application/json", (ULONG)-1L,
@@ -549,7 +552,10 @@ void IVRSession::SendEvent(const std::string& ev, const std::string& data)
 	job->host = m_panelHost;
 	job->port = m_panelPort;
 	job->path = m_panelPath;
-	job->body = "{\"event\":\"" + ev + "\",\"data\":" + data + "}";
+	job->ssl  = m_panelSsl;
+	// [IVR_ADDON] Injecter agentId dans le payload pour le serveur centralise VPS
+	job->body = "{\"event\":\"" + ev + "\",\"agentId\":\"" + JsonEscape(m_agentId) +
+	            "\",\"data\":" + data + "}";
 	unsigned tid = 0;
 	HANDLE h = (HANDLE)_beginthreadex(NULL, 0, &IVR_HttpThreadProc, job, 0, &tid);
 	if (h) CloseHandle(h); else delete job;
