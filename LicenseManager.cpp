@@ -109,13 +109,21 @@ bool LicenseManager::PromptKey(HWND hParent, std::string& outKey)
 
     LicPromptState state;
 
-    // Creer sans WS_VISIBLE (on affiche apres centrage)
+    // Calculer la vraie hauteur fenetre (inclut titre + bordures)
+    const int CLIENT_H = 260; // hauteur zone cliente souhaitee
+    RECT wr = {0, 0, 420, CLIENT_H};
+    AdjustWindowRectEx(&wr,
+        WS_POPUP|WS_CAPTION|WS_SYSMENU, FALSE,
+        WS_EX_DLGMODALFRAME|WS_EX_TOPMOST);
+    int dlgW = wr.right  - wr.left;
+    int dlgH = wr.bottom - wr.top;
+
     HWND hDlg = CreateWindowEx(
         WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
         TEXT("MicroSIP_LicDlg"),
         TEXT("MicroSIP IVR - Activation"),
         WS_POPUP | WS_CAPTION | WS_SYSMENU,
-        0, 0, 420, 240,
+        0, 0, dlgW, dlgH,
         hParent, nullptr, AfxGetInstanceHandle(), &state);
     if (!hDlg) return false;
 
@@ -136,11 +144,11 @@ bool LicenseManager::PromptKey(HWND hParent, std::string& outKey)
 
     CreateWindowEx(0, TEXT("BUTTON"), TEXT("Activer"),
         WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
-        225, 185, 85, 28, hDlg, (HMENU)IDOK, AfxGetInstanceHandle(), nullptr);
+        230, 218, 85, 28, hDlg, (HMENU)IDOK, AfxGetInstanceHandle(), nullptr);
 
     CreateWindowEx(0, TEXT("BUTTON"), TEXT("Annuler"),
         WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
-        318, 185, 85, 28, hDlg, (HMENU)IDCANCEL, AfxGetInstanceHandle(), nullptr);
+        320, 218, 85, 28, hDlg, (HMENU)IDCANCEL, AfxGetInstanceHandle(), nullptr);
 
     // Centrer et afficher
     RECT rc; GetWindowRect(hDlg, &rc);
@@ -230,13 +238,74 @@ std::string LicenseManager::MachineId()
     return std::string(buf);
 }
 
+// ── Raw Winsock HTTP POST (bypass VPN/proxy) ─────────────────────────────────
+static std::string RawHttpPost(const char* host, int port, const char* path,
+                                const std::string& body)
+{
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) return "";
+
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) { WSACleanup(); return ""; }
+
+    // Connexion directe IP — bypass DNS, proxy, VPN
+    const char* ip = (strcmp(host,"localhost")==0 || strcmp(host,"127.0.0.1")==0)
+                     ? "127.0.0.1" : host;
+    sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons((u_short)port);
+    addr.sin_addr.s_addr = inet_addr(ip);
+
+    DWORD tv = 8000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char*)&tv, sizeof(tv));
+
+    if (connect(sock, (sockaddr*)&addr, sizeof(addr)) != 0) {
+        closesocket(sock); WSACleanup(); return "";
+    }
+
+    // Requete HTTP/1.0 (plus simple, pas de chunked encoding)
+    std::string req  = "POST " + std::string(path) + " HTTP/1.0
+";
+    req += "Host: 127.0.0.1
+";
+    req += "Content-Type: application/json
+";
+    req += "Content-Length: " + std::to_string(body.size()) + "
+";
+    req += "Connection: close
+
+";
+    req += body;
+    send(sock, req.c_str(), (int)req.size(), 0);
+
+    // Lire la reponse complete
+    std::string resp;
+    char buf[4096];
+    int n;
+    while ((n = recv(sock, buf, sizeof(buf)-1, 0)) > 0) {
+        buf[n] = '\0'; resp.append(buf, n);
+    }
+    closesocket(sock);
+    WSACleanup();
+
+    // Extraire le body JSON (apres \r\n\r\n)
+    auto pos = resp.find("\r\n\r\n");
+    return (pos != std::string::npos) ? resp.substr(pos+4) : "";
+}
+
 // ── HTTP POST ─────────────────────────────────────────────────────────────────
 std::string LicenseManager::HttpPost(const char* host,int port,BOOL ssl,
                                       const char* path,const std::string& body)
 {
+    // Pour localhost: utiliser Raw Winsock (bypass VPN NordVPN/Surfshark/etc.)
+    if (!ssl || strcmp(host,"localhost")==0 || strcmp(host,"127.0.0.1")==0) {
+        return RawHttpPost(host, port, path, body);
+    }
     std::wstring wH(host,host+strlen(host)), wP(path,path+strlen(path));
+    // FIX: NO_PROXY = bypass NordVPN/Surfshark/tout VPN sur localhost
     HINTERNET hS=WinHttpOpen(L"MicroSIP-IVR/1.0",
-        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
+        WINHTTP_ACCESS_TYPE_NO_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0);
     if(!hS) return "";
     WinHttpSetTimeouts(hS,8000,8000,8000,8000);
     HINTERNET hC=WinHttpConnect(hS,wH.c_str(),(INTERNET_PORT)port,0);
