@@ -115,7 +115,7 @@ bool LicenseManager::PromptKey(HWND hParent, std::string& outKey)
         TEXT("MicroSIP_LicDlg"),
         TEXT("MicroSIP IVR - Activation"),
         WS_POPUP | WS_CAPTION | WS_SYSMENU,
-        0, 0, 420, 200,
+        0, 0, 420, 240,
         hParent, nullptr, AfxGetInstanceHandle(), &state);
     if (!hDlg) return false;
 
@@ -136,11 +136,11 @@ bool LicenseManager::PromptKey(HWND hParent, std::string& outKey)
 
     CreateWindowEx(0, TEXT("BUTTON"), TEXT("Activer"),
         WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_DEFPUSHBUTTON,
-        225, 148, 85, 28, hDlg, (HMENU)IDOK, AfxGetInstanceHandle(), nullptr);
+        225, 185, 85, 28, hDlg, (HMENU)IDOK, AfxGetInstanceHandle(), nullptr);
 
     CreateWindowEx(0, TEXT("BUTTON"), TEXT("Annuler"),
         WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
-        318, 148, 85, 28, hDlg, (HMENU)IDCANCEL, AfxGetInstanceHandle(), nullptr);
+        318, 185, 85, 28, hDlg, (HMENU)IDCANCEL, AfxGetInstanceHandle(), nullptr);
 
     // Centrer et afficher
     RECT rc; GetWindowRect(hDlg, &rc);
@@ -260,7 +260,9 @@ std::string LicenseManager::HttpPost(const char* host,int port,BOOL ssl,
 bool LicenseManager::ValidateOnline(const std::string& key, LicData& out)
 {
     std::string body="{\"key\":\""+key+"\",\"machine_id\":\""+MachineId()+"\"}";
-    std::string resp=HttpPost(LIC_SERVER_HOST,LIC_SERVER_PORT,LIC_SERVER_SSL,"/api/activate",body);
+    // FIX: Utiliser 127.0.0.1 au lieu de localhost (evite interferences VPN/DNS)
+    const char* host = (strcmp(LIC_SERVER_HOST,"localhost")==0) ? "127.0.0.1" : LIC_SERVER_HOST;
+    std::string resp=HttpPost(host,LIC_SERVER_PORT,LIC_SERVER_SSL,"/api/activate",body);
     if(resp.empty()) return false;
 
     auto find=[&](const std::string& field)->std::string{
@@ -301,7 +303,7 @@ bool LicenseManager::CheckOnStartup(HWND hParent)
         if (now>lic.expiry){m_expiry=lic.expiry;ShowExpired(hParent);return false;}
 
         // FIX-2 : Re-valider en ligne tous les LIC_REVALIDATE_DAYS jours
-       if (true) { // Re-valider a chaque demarrage) 
+        if ((now-lic.lastOnline) > (LIC_REVALIDATE_DAYS*86400LL)) {
             LicData fresh;
             if (ValidateOnline(lic.key,fresh)) {
                 lic.expiry=fresh.expiry; lic.lastOnline=now;
