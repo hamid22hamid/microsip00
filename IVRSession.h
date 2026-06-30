@@ -85,6 +85,7 @@ private:
 	IVRSession(const IVRSession&) = delete;
 
 	void PlayCurrentStep();
+	void StartSilenceWatchdog(); // [IVR_ADDON] Rejoue le WAV apres 5s de silence
 	void AdvanceToNextStep();
 	void ResetCurrentStep();
 	void FinalizeAndHold();
@@ -109,6 +110,7 @@ private:
 	std::string   m_currentDigits;
 	std::map<std::string, std::string> m_results;
 	bool          m_pendingHold; // true = WAV finale joue, hold en attente
+	long          m_digitGeneration; // [IVR_ADDON] Incremente a chaque digit/etape, pour detecter le silence
 
 	// Player PJSIP du step courant
 	pjsua_player_id m_playerId;

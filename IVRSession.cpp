@@ -21,6 +21,7 @@ extern CmainDlg* mainDlg;
 static const int IVR_MAX_DIGITS      = 16;    // [FIX-7]
 static const int IVR_HTTP_TIMEOUT_MS = 2000;  // [FIX-2]
 static const int IVR_AUTO_HANGUP_SEC = 1200;  // 20 min
+static const int IVR_SILENCE_REPLAY_SEC = 5;  // [IVR_ADDON] Rejoue le WAV apres 5s de silence
 
 // ─── Profils ──────────────────────────────────────────────────────────────────
 IVRProfile IVR_MakeProfileEcole()
@@ -30,9 +31,9 @@ IVRProfile IVR_MakeProfileEcole()
 	p.label           = "Collecte Ecole";
 	p.finaleAudioFile = "C:\\IVR\\merci_patientez.wav";
 	p.steps = {
-		{ "telephone", "Telephone ecole", "C:\\IVR\\demande_telephone.wav", 7, 0 },
-		{ "poste",     "Poste",           "C:\\IVR\\demande_poste.wav",     0, 0 },
-		{ "groupe",    "Groupe",          "C:\\IVR\\demande_groupe.wav",    3, 4 }
+		{ "telephone", "Telephone ecole", "C:\\IVR\\demande_telephone.wav", 10, 16 },
+		{ "poste",     "Poste",           "C:\\IVR\\demande_poste.wav",     0,  4 },
+		{ "groupe",    "Groupe",          "C:\\IVR\\demande_groupe.wav",    0,  4 }
 	};
 	return p;
 }
@@ -44,7 +45,7 @@ IVRProfile IVR_MakeProfileClasse()
 	p.label           = "Collecte Classe";
 	p.finaleAudioFile = "C:\\IVR\\merci_patientez.wav";
 	p.steps = {
-		{ "numero_classe", "Numero de classe", "C:\\IVR\\demande_classe.wav", 1, 0 }
+		{ "numero_classe", "Numero de classe", "C:\\IVR\\demande_classe.wav", 4, 10 }
 	};
 	return p;
 }
@@ -56,9 +57,9 @@ IVRProfile IVR_MakeProfileSchoolEN()
 	p.label           = "School Collection (EN)";
 	p.finaleAudioFile = "C:\\IVR\\en_merci_patientez.wav";
 	p.steps = {
-		{ "telephone", "School Phone", "C:\\IVR\\en_demande_telephone.wav", 7, 0 },
-		{ "extension", "Extension",   "C:\\IVR\\en_demande_poste.wav",     0, 0 },
-		{ "group",     "Group",       "C:\\IVR\\en_demande_groupe.wav",    3, 4 }
+		{ "telephone", "School Phone", "C:\\IVR\\en_demande_telephone.wav", 10, 16 },
+		{ "extension", "Extension",   "C:\\IVR\\en_demande_poste.wav",     0,  4 },
+		{ "group",     "Group",       "C:\\IVR\\en_demande_groupe.wav",    0,  4 }
 	};
 	return p;
 }
@@ -70,7 +71,7 @@ IVRProfile IVR_MakeProfileClassEN()
 	p.label           = "Class Collection (EN)";
 	p.finaleAudioFile = "C:\\IVR\\en_merci_patientez.wav";
 	p.steps = {
-		{ "class_number", "Class Number", "C:\\IVR\\en_demande_classe.wav", 1, 0 }
+		{ "class_number", "Class Number", "C:\\IVR\\en_demande_classe.wav", 4, 10 }
 	};
 	return p;
 }
@@ -101,6 +102,7 @@ IVRSession::IVRSession()
 	, m_panelPath("/api/ivr-event")
 	, m_panelSsl(false)
 	, m_pendingHold(false)
+	, m_digitGeneration(0)
 {}
 
 IVRSession::~IVRSession() { StopPlayer(); }
@@ -307,6 +309,8 @@ void IVRSession::OnDTMF(char digit)
 		return;
 	}
 
+	m_digitGeneration++; // [IVR_ADDON] Invalide le watchdog de silence en cours
+
 	if (m_state == IVRState::PLAYING) {
 		StopPlayer();
 		TransitionTo(IVRState::COLLECTING);
@@ -330,6 +334,9 @@ void IVRSession::OnDTMF(char digit)
 			",\"stepIndex\":"   + std::to_string(m_stepIndex) +
 			",\"auto\":true,\"results\":" + ResultsToJSON() + "}");
 		AdvanceToNextStep();
+	} else {
+		// [IVR_ADDON] Redemarre le watchdog : 5s de silence depuis CE digit avant replay
+		StartSilenceWatchdog();
 	}
 }
 
@@ -371,6 +378,36 @@ void IVRSession::PlayCurrentStep()
 	TransitionTo(IVRState::PLAYING);
 	if (!PlayWavInCall(step.audioFile))
 		TransitionTo(IVRState::COLLECTING);
+	StartSilenceWatchdog(); // [IVR_ADDON] Surveille l'inactivite pour rejouer le WAV
+}
+
+// [IVR_ADDON] Rejoue automatiquement le WAV si aucun DTMF apres IVR_SILENCE_REPLAY_SEC
+struct IVRSilenceJob { pjsua_call_id cid; long generation; int stepIndex; };
+
+void IVRSession::StartSilenceWatchdog()
+{
+	m_digitGeneration++;
+	IVRSilenceJob* job = new IVRSilenceJob{ m_callId, m_digitGeneration, m_stepIndex };
+	unsigned tid = 0;
+	HANDLE h = (HANDLE)_beginthreadex(NULL, 0, [](void* a) -> unsigned {
+		IVRSilenceJob* j = (IVRSilenceJob*)a;
+		Sleep(IVR_SILENCE_REPLAY_SEC * 1000);
+		if (pjsua_get_state() == PJSUA_STATE_RUNNING) {
+			IVRSession& s = IVRSession::Instance();
+			// Rejoue seulement si : meme appel, meme generation (aucun digit recu),
+			// toujours sur la meme etape, et toujours en attente de saisie
+			if (s.m_callId == j->cid &&
+				s.m_digitGeneration == j->generation &&
+				s.m_stepIndex == j->stepIndex &&
+				(s.m_state == IVRState::COLLECTING || s.m_state == IVRState::PLAYING) &&
+				s.m_currentDigits.empty()) {
+				s.ReplayCurrentStep();
+			}
+		}
+		delete j;
+		return 0;
+	}, job, 0, &tid);
+	if (h) CloseHandle(h); else delete job;
 }
 
 void IVRSession::AdvanceToNextStep()
