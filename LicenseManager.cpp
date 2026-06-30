@@ -301,7 +301,7 @@ bool LicenseManager::CheckOnStartup(HWND hParent)
         if (now>lic.expiry){m_expiry=lic.expiry;ShowExpired(hParent);return false;}
 
         // FIX-2 : Re-valider en ligne tous les LIC_REVALIDATE_DAYS jours
-        if ((now-lic.lastOnline) > (LIC_REVALIDATE_DAYS*86400LL)) {
+       if (true) { // Re-valider a chaque demarrage) 
             LicData fresh;
             if (ValidateOnline(lic.key,fresh)) {
                 lic.expiry=fresh.expiry; lic.lastOnline=now;
