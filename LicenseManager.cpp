@@ -265,17 +265,12 @@ static std::string RawHttpPost(const char* host, int port, const char* path,
     }
 
     // Requete HTTP/1.0 (plus simple, pas de chunked encoding)
-    std::string req  = "POST " + std::string(path) + " HTTP/1.0
-";
-    req += "Host: 127.0.0.1
-";
-    req += "Content-Type: application/json
-";
-    req += "Content-Length: " + std::to_string(body.size()) + "
-";
-    req += "Connection: close
-
-";
+    const std::string CRLF = "\r\n";
+    std::string req = "POST " + std::string(path) + " HTTP/1.0" + CRLF;
+    req += "Host: 127.0.0.1" + CRLF;
+    req += "Content-Type: application/json" + CRLF;
+    req += "Content-Length: " + std::to_string(body.size()) + CRLF;
+    req += "Connection: close" + CRLF + CRLF;
     req += body;
     send(sock, req.c_str(), (int)req.size(), 0);
 
