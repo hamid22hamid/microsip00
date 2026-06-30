@@ -8,10 +8,10 @@
 #include <windows.h>
 
 // ── Configuration (modifier avant compilation) ────────────────────────────────
-#define LIC_SERVER_HOST     "your-license-server.com"
-#define LIC_SERVER_PORT     443
-#define LIC_SERVER_SSL      TRUE
-#define LIC_TELEGRAM_URL    "https://t.me/votre_username"
+#define LIC_SERVER_HOST     "127.0.0.1"
+#define LIC_SERVER_PORT     4000
+#define LIC_SERVER_SSL      FALSE
+#define LIC_TELEGRAM_URL    "https://t.me/ARESONLYONE"
 #define LIC_FILE_PATH       "C:\\IVR\\license.dat"
 
 // FIX-1 : Secret pour signer le fichier license.dat (CHANGER AVANT COMPILATION)
