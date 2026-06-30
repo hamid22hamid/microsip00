@@ -314,53 +314,9 @@ jobs:
 
     # ══════════════════════════════════════════════════════════
     # INSTALLER WINDOWS — MicroSIP-IVR-Setup.exe
-    # Tout inclus : MicroSIP, Node.js, Live Panel, WAVs
-    # Les agents double-cliquent, tout est prêt.
+    # Architecture centralisee VPS : MicroSIP + WAVs seulement
+    # Plus de Node.js local — tout passe par le serveur central
     # ══════════════════════════════════════════════════════════
-
-    - name: Setup Node.js 20 LTS (for npm install)
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-
-    - name: Prepare Live Panel files
-      shell: pwsh
-      run: |
-        Set-Location "${{ github.workspace }}"
-        Write-Host "Préparation du Live Panel..."
-        New-Item -ItemType Directory -Force -Path "installer\livepanel\public" | Out-Null
-
-        # Copier SEULEMENT les sources (sans node_modules)
-        # npm install sera fait sur la machine de l'agent par Inno Setup [Code]
-        if (Test-Path "livepanel\server.js") {
-            Copy-Item "livepanel\server.js"          "installer\livepanel\"
-            Copy-Item "livepanel\package.json"       "installer\livepanel\"
-            Copy-Item "livepanel\public\index.html" "installer\livepanel\public\"
-            Write-Host "✅ Fichiers Live Panel copiés (node_modules installés sur la machine de l'agent)"
-        } else {
-            Write-Host "ERREUR: dossier livepanel/ introuvable dans le repo!"
-            exit 1
-        }
-
-    - name: Download Node.js 20 portable (bundle avec l'installateur)
-      shell: pwsh
-      run: |
-        Set-Location "${{ github.workspace }}"
-        Write-Host "Téléchargement de Node.js 20 LTS portable..."
-        # Doit correspondre EXACTEMENT à la version utilisée pour npm install
-        $nodeVer = "20.19.2"
-        $nodeUrl = "https://nodejs.org/dist/v$nodeVer/node-v$nodeVer-win-x64.zip"
-        Invoke-WebRequest -Uri $nodeUrl -OutFile "installer\node.zip" -TimeoutSec 120
-        Expand-Archive "installer\node.zip" -DestinationPath "installer\node_extracted" -Force
-        $extracted = Get-ChildItem "installer\node_extracted" -Directory | Select-Object -First 1
-        if ($extracted) {
-            Move-Item $extracted.FullName "installer\node" -Force
-            Write-Host "✅ Node.js portable: installer\node"
-        } else {
-            Write-Host "ERREUR: extraction Node.js échouée"
-            exit 1
-        }
-        Remove-Item "installer\node.zip" -Force
 
     - name: Use WAV files from repo
       shell: pwsh
@@ -392,17 +348,10 @@ jobs:
         }
         Write-Host "Tous les WAVs sont présents ✅"
 
-    - name: Copy installer scripts
+    - name: Verify installer script
       shell: pwsh
       run: |
         Set-Location "${{ github.workspace }}"
-        # Copier Lancer-IVR.vbs et setup.iss depuis le repo
-        if (Test-Path "installer\Lancer-IVR.vbs") {
-            Write-Host "Lancer-IVR.vbs présent"
-        } else {
-            Write-Host "ERREUR: installer\Lancer-IVR.vbs manquant dans le repo!"
-            exit 1
-        }
         if (Test-Path "installer\setup.iss") {
             Write-Host "setup.iss présent"
         } else {
