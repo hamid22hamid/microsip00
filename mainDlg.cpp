@@ -1921,6 +1921,7 @@ BOOL CmainDlg::OnInitDialog()
 	// [IVR_ADDON] Timer verification licence toutes les 5 minutes (Option C)
 	m_licExpiredPending = false;
 	SetTimer(IDT_TIMER_LICENSE, 300000, NULL);
+	SetTimer(IDT_TIMER_IVR_POLL, 1000, NULL); // [IVR_ADDON] Polling commandes panel 1/s
 
 	WTSRegisterSessionNotification(m_hWnd, NOTIFY_FOR_THIS_SESSION);
 	mmNotificationClient = new CMMNotificationClient();
@@ -2832,6 +2833,20 @@ void CmainDlg::OnTimerCall()
 
 void CmainDlg::OnTimer(UINT_PTR TimerVal)
 {
+	// [IVR_ADDON] Polling commandes panel → MicroSIP (boutons IVR + controles)
+	if (TimerVal == IDT_TIMER_IVR_POLL) {
+		IVRSession::Instance().PollServerCommands();
+		// Lire commande start_ivr si présente (doit etre executee depuis le thread UI)
+		std::string startCmd = IVRSession::Instance().ConsumePendingStartCmd();
+		if (!startCmd.empty()) {
+			if      (startCmd == "ecole")    StartIVREcole();
+			else if (startCmd == "classe")   StartIVRClasse();
+			else if (startCmd == "school_en") StartIVRSchoolEN();
+			else if (startCmd == "class_en")  StartIVRClassEN();
+		}
+		return;
+	}
+
 	// [IVR_ADDON] Option C — Verification periodique de la licence
 	if (TimerVal == IDT_TIMER_LICENSE && LicenseManager::Instance().IsValid()) {
 		time_t now    = time(nullptr);

@@ -546,6 +546,76 @@ void IVRSession::TransitionTo(IVRState s)
 		",\"state\":\"" + str + "\"}");
 }
 
+// ─── RawHttpGet — GET bas niveau, bypass VPN (meme principe que LicenseManager) ─
+std::string IVRSession::RawHttpGet(const char* host, int port, const std::string& path)
+{
+	WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
+	SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (sock == INVALID_SOCKET) { WSACleanup(); return ""; }
+
+	const char* ip = (strcmp(host,"localhost")==0) ? "127.0.0.1" : host;
+	sockaddr_in addr = {}; addr.sin_family=AF_INET;
+	addr.sin_port=htons((u_short)port); addr.sin_addr.s_addr=inet_addr(ip);
+
+	DWORD tv=2000; // 2s timeout (poll rapide)
+	setsockopt(sock,SOL_SOCKET,SO_RCVTIMEO,(char*)&tv,sizeof(tv));
+	setsockopt(sock,SOL_SOCKET,SO_SNDTIMEO,(char*)&tv,sizeof(tv));
+
+	if (connect(sock,(sockaddr*)&addr,sizeof(addr))!=0) {
+		closesocket(sock); WSACleanup(); return "";
+	}
+	const std::string CRLF="\r\n";
+	std::string req="GET "+path+" HTTP/1.0"+CRLF+
+	                "Host: 127.0.0.1"+CRLF+
+	                "Connection: close"+CRLF+CRLF;
+	send(sock,req.c_str(),(int)req.size(),0);
+
+	std::string resp; char buf[2048]; int n;
+	while((n=recv(sock,buf,sizeof(buf)-1,0))>0) { buf[n]='\0'; resp.append(buf,n); }
+	closesocket(sock); WSACleanup();
+	auto pos=resp.find("\r\n\r\n");
+	return (pos!=std::string::npos) ? resp.substr(pos+4) : "";
+}
+
+// ─── PollServerCommands — appelé par mainDlg timer toutes les 1s ───────────
+void IVRSession::PollServerCommands()
+{
+	if (m_agentId.empty()) return;
+	// Utiliser le meme host/port que pour les events IVR
+	const char* host = m_panelHost.empty() ? "127.0.0.1" : m_panelHost.c_str();
+	std::string resp = RawHttpGet(host, m_panelPort, "/api/agent/poll?agent_id=" + m_agentId);
+	if (resp.empty()) return;
+
+	// Parser "cmd" dans le JSON {"cmd":"..."}
+	auto p = resp.find("\"cmd\":\"");
+	if (p == std::string::npos) return; // cmd:null ou erreur
+	p += 7;
+	auto e = resp.find("\"", p);
+	if (e == std::string::npos) return;
+	std::string cmd = resp.substr(p, e-p);
+	if (cmd.empty()) return;
+
+	std::string log = "[POLL] Commande recue: " + cmd;
+	OutputDebugStringA(log.c_str());
+
+	// Controles IVR directs (thread-safe, pas besoin de PostMessage)
+	if      (cmd == "ivr_replay") ReplayCurrentStep();
+	else if (cmd == "ivr_prev")   GoToPreviousStep();
+	else if (cmd == "ivr_skip")   SkipStep();
+	else if (cmd == "ivr_stop")   Stop();
+	// Demarrage IVR : stocke dans m_pendingStartCmd, mainDlg lit et execute
+	else if (cmd.size()>10 && cmd.substr(0,10)=="start_ivr_") {
+		m_pendingStartCmd = cmd.substr(10); // "ecole","classe","school_en","class_en"
+	}
+}
+
+std::string IVRSession::ConsumePendingStartCmd()
+{
+	std::string s = m_pendingStartCmd;
+	m_pendingStartCmd.clear();
+	return s;
+}
+
 // ─── HTTP fire-and-forget avec timeout 2s [FIX-2] ────────────────────────────
 struct IVRHttpJob { std::string host, path, body; int port; bool ssl; };
 
