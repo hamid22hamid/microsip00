@@ -103,6 +103,7 @@ IVRSession::IVRSession()
 	, m_panelSsl(false)
 	, m_pendingHold(false)
 	, m_digitGeneration(0)
+	, m_pollRunning(false)
 {}
 
 IVRSession::~IVRSession() { StopPlayer(); }
@@ -544,6 +545,28 @@ void IVRSession::TransitionTo(IVRState s)
 	SendEvent("state_change",
 		"{\"callId\":" + std::to_string((int)m_callId) +
 		",\"state\":\"" + str + "\"}");
+}
+
+// ─── Thread de polling commandes panel (tourne en fond, jamais sur UI thread) ─
+void IVRSession::StartPollThread()
+{
+	if (m_pollRunning) return;
+	m_pollRunning = true;
+	_beginthreadex(NULL, 0, [](void* arg) -> unsigned {
+		IVRSession* self = (IVRSession*)arg;
+		while (self->m_pollRunning) {
+			if (!self->m_agentId.empty()) {
+				self->PollServerCommands(); // HTTP sur thread de fond = UI jamais gelé
+			}
+			Sleep(1000); // Poll toutes les secondes
+		}
+		return 0;
+	}, this, 0, nullptr);
+}
+
+void IVRSession::StopPollThread()
+{
+	m_pollRunning = false; // Le thread se termine proprement au prochain Sleep()
 }
 
 // ─── RawHttpGet — GET bas niveau, bypass VPN (meme principe que LicenseManager) ─

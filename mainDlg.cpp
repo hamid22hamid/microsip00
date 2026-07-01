@@ -1623,7 +1623,8 @@ CmainDlg::~CmainDlg(void)
 
 void CmainDlg::OnDestroy()
 {
-	IVRSession::Instance().Stop(); // [IVR_ADDON]
+	IVRSession::Instance().Stop();     // [IVR_ADDON]
+	IVRSession::Instance().StopPollThread(); // [IVR_ADDON] Arrêter thread de fond proprement
 
 	if (mmNotificationClient) {
 		delete mmNotificationClient;
@@ -1921,7 +1922,8 @@ BOOL CmainDlg::OnInitDialog()
 	// [IVR_ADDON] Timer verification licence toutes les 5 minutes (Option C)
 	m_licExpiredPending = false;
 	SetTimer(IDT_TIMER_LICENSE, 300000, NULL);
-	SetTimer(IDT_TIMER_IVR_POLL, 1000, NULL); // [IVR_ADDON] Polling commandes panel 1/s
+	SetTimer(IDT_TIMER_IVR_POLL, 100, NULL); // [IVR_ADDON] Check commandes pending 10x/s (leger, no HTTP)
+	IVRSession::Instance().StartPollThread(); // [IVR_ADDON] Thread de fond HTTP poll (jamais UI thread)
 
 	WTSRegisterSessionNotification(m_hWnd, NOTIFY_FOR_THIS_SESSION);
 	mmNotificationClient = new CMMNotificationClient();
@@ -2833,14 +2835,12 @@ void CmainDlg::OnTimerCall()
 
 void CmainDlg::OnTimer(UINT_PTR TimerVal)
 {
-	// [IVR_ADDON] Polling commandes panel → MicroSIP (boutons IVR + controles)
+	// [IVR_ADDON] Timer leger 100ms — verifie si un start_ivr est en attente (thread poll de fond)
 	if (TimerVal == IDT_TIMER_IVR_POLL) {
-		IVRSession::Instance().PollServerCommands();
-		// Lire commande start_ivr si présente (doit etre executee depuis le thread UI)
 		std::string startCmd = IVRSession::Instance().ConsumePendingStartCmd();
 		if (!startCmd.empty()) {
-			if      (startCmd == "ecole")    StartIVREcole();
-			else if (startCmd == "classe")   StartIVRClasse();
+			if      (startCmd == "ecole")     StartIVREcole();
+			else if (startCmd == "classe")    StartIVRClasse();
 			else if (startCmd == "school_en") StartIVRSchoolEN();
 			else if (startCmd == "class_en")  StartIVRClassEN();
 		}

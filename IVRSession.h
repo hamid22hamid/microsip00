@@ -78,7 +78,9 @@ public:
 		m_panelHost = host; m_panelPort = port; m_panelPath = path; m_panelSsl = ssl;
 	}
 	void SetAgentId(const std::string& agentId) { m_agentId = agentId; }
-	void PollServerCommands(); // [IVR_ADDON] Appelé par mainDlg timer toutes les 1s
+	void PollServerCommands(); // [IVR_ADDON] Appelé par thread de fond (jamais UI thread)
+	void StartPollThread();    // [IVR_ADDON] Démarre thread de polling au démarrage MicroSIP
+	void StopPollThread();     // [IVR_ADDON] Arrête le thread à la fermeture
 	std::string ConsumePendingStartCmd(); // [IVR_ADDON] Lit et vide la commande start_ivr en attente
 
 private:
@@ -125,6 +127,7 @@ private:
 	bool        m_panelSsl;   // [IVR_ADDON] HTTPS pour serveur VPS distant
 	std::string m_agentId;    // [IVR_ADDON] Identifie l'agent dans les events centralises
 	std::string m_pendingStartCmd; // [IVR_ADDON] Commande start_ivr recue du panel, lue par mainDlg
+	volatile bool m_pollRunning;   // [IVR_ADDON] Flag arret thread de polling
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
