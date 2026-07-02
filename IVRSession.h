@@ -78,6 +78,7 @@ public:
 		m_panelHost = host; m_panelPort = port; m_panelPath = path; m_panelSsl = ssl;
 	}
 	void SetAgentId(const std::string& agentId) { m_agentId = agentId; }
+	void NotifyStartup(); // [IVR_ADDON] Envoie agent_startup au serveur (nettoie vieux appels)
 	void PollServerCommands(); // [IVR_ADDON] Appelé par thread de fond (jamais UI thread)
 	void StartPollThread();    // [IVR_ADDON] Démarre thread de polling au démarrage MicroSIP
 	void StopPollThread();     // [IVR_ADDON] Arrête le thread à la fermeture

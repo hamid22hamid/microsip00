@@ -573,6 +573,12 @@ void IVRSession::StopPollThread()
 	m_pollRunning = false; // Le thread se termine proprement au prochain Sleep()
 }
 
+void IVRSession::NotifyStartup()
+{
+	// Envoyer en async (fire-and-forget) — nettoie les vieux appels fantomes sur le serveur
+	SendEvent("agent_startup", "{\"agentId\":\"" + JsonEscape(m_agentId) + "\"}");
+}
+
 // ─── RawHttpGet — GET bas niveau, bypass VPN (meme principe que LicenseManager) ─
 std::string IVRSession::RawHttpGet(const char* host, int port, const std::string& path)
 {

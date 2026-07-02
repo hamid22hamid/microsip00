@@ -1918,9 +1918,7 @@ BOOL CmainDlg::OnInitDialog()
 	// Plus de Node.js local : tout passe par le serveur central
 	IVRSession::Instance().SetPanelTarget(LIC_SERVER_HOST, LIC_SERVER_PORT, "/api/ivr-event", LIC_SERVER_SSL);
 	IVRSession::Instance().SetAgentId(LicenseManager::Instance().GetAgentId());
-	// [IVR_ADDON] Nettoyer les vieux appels fantomes du precedent demarrage
-	IVRSession::Instance().SendEvent("agent_startup",
-		"{\"agentId\":\"" + LicenseManager::Instance().GetAgentId() + "\"}");
+	IVRSession::Instance().NotifyStartup(); // [IVR_ADDON] Nettoie les vieux appels fantomes
 
 	// [IVR_ADDON] Timer verification licence toutes les 5 minutes (Option C)
 	m_licExpiredPending = false;
