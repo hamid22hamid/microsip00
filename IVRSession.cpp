@@ -31,9 +31,9 @@ IVRProfile IVR_MakeProfileEcole()
 	p.label           = "Collecte Ecole";
 	p.finaleAudioFile = "C:\\IVR\\merci_patientez.wav";
 	p.steps = {
-		{ "telephone", "Telephone ecole", "C:\\IVR\\demande_telephone.wav", 10, 16 },
-		{ "poste",     "Poste",           "C:\\IVR\\demande_poste.wav",     0,  4 },
-		{ "groupe",    "Groupe",          "C:\\IVR\\demande_groupe.wav",    0,  4 }
+		{ "telephone", "Telephone ecole", "C:\\IVR\\demande_telephone.wav", 16, 0 },
+		{ "poste",     "Poste",           "C:\\IVR\\demande_poste.wav",      4, 0 },
+		{ "groupe",    "Groupe",          "C:\\IVR\\demande_groupe.wav",     3, 0 }
 	};
 	return p;
 }
@@ -45,7 +45,7 @@ IVRProfile IVR_MakeProfileClasse()
 	p.label           = "Collecte Classe";
 	p.finaleAudioFile = "C:\\IVR\\merci_patientez.wav";
 	p.steps = {
-		{ "numero_classe", "Numero de classe", "C:\\IVR\\demande_classe.wav", 4, 10 }
+		{ "numero_classe", "Numero de classe", "C:\\IVR\\demande_classe.wav", 6, 0 }
 	};
 	return p;
 }
@@ -57,9 +57,9 @@ IVRProfile IVR_MakeProfileSchoolEN()
 	p.label           = "School Collection (EN)";
 	p.finaleAudioFile = "C:\\IVR\\en_merci_patientez.wav";
 	p.steps = {
-		{ "telephone", "School Phone", "C:\\IVR\\en_demande_telephone.wav", 10, 16 },
-		{ "extension", "Extension",   "C:\\IVR\\en_demande_poste.wav",     0,  4 },
-		{ "group",     "Group",       "C:\\IVR\\en_demande_groupe.wav",    0,  4 }
+		{ "telephone", "School Phone", "C:\\IVR\\en_demande_telephone.wav", 16, 0 },
+		{ "extension", "Extension",   "C:\\IVR\\en_demande_poste.wav",      4, 0 },
+		{ "group",     "Group",       "C:\\IVR\\en_demande_groupe.wav",     3, 0 }
 	};
 	return p;
 }
@@ -71,7 +71,7 @@ IVRProfile IVR_MakeProfileClassEN()
 	p.label           = "Class Collection (EN)";
 	p.finaleAudioFile = "C:\\IVR\\en_merci_patientez.wav";
 	p.steps = {
-		{ "class_number", "Class Number", "C:\\IVR\\en_demande_classe.wav", 4, 10 }
+		{ "class_number", "Class Number", "C:\\IVR\\en_demande_classe.wav", 6, 0 }
 	};
 	return p;
 }
@@ -356,6 +356,9 @@ void IVRSession::OnAudioDone()
 	}
 	StopPlayer();
 	TransitionTo(IVRState::COLLECTING);
+	// [IVR_ADDON] Watchdog demarre ICI — apres fin du WAV — pour 5s de VRAI silence
+	// Si aucun DTMF dans les 5 prochaines secondes → rejoue le WAV
+	StartSilenceWatchdog();
 	if (m_stepIndex < (int)m_profile.steps.size()) {
 		const IVRStep& step = m_profile.steps[m_stepIndex];
 		SendEvent("audio_done",
@@ -378,9 +381,13 @@ void IVRSession::PlayCurrentStep()
 		",\"stepIndex\":"   + std::to_string(m_stepIndex) +
 		",\"totalSteps\":"  + std::to_string(m_profile.steps.size()) + "}");
 	TransitionTo(IVRState::PLAYING);
-	if (!PlayWavInCall(step.audioFile))
+	if (!PlayWavInCall(step.audioFile)) {
+		// WAV manquant — passer direct en COLLECTING et demarrer le watchdog
 		TransitionTo(IVRState::COLLECTING);
-	StartSilenceWatchdog(); // [IVR_ADDON] Surveille l'inactivite pour rejouer le WAV
+		StartSilenceWatchdog();
+	}
+	// [IVR_ADDON] Si WAV joue correctement, le watchdog demarre dans OnAudioDone
+	// → 5s de VRAI silence (apres fin du WAV), pas 5s depuis le debut du WAV
 }
 
 // [IVR_ADDON] Rejoue automatiquement le WAV si aucun DTMF apres IVR_SILENCE_REPLAY_SEC
