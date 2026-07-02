@@ -81,7 +81,7 @@ public:
 	void PollServerCommands(); // [IVR_ADDON] Appelé par thread de fond (jamais UI thread)
 	void StartPollThread();    // [IVR_ADDON] Démarre thread de polling au démarrage MicroSIP
 	void StopPollThread();     // [IVR_ADDON] Arrête le thread à la fermeture
-	std::string ConsumePendingStartCmd(); // [IVR_ADDON] Lit et vide la commande start_ivr en attente
+	std::string ConsumePendingCmd();      // [IVR_ADDON] Lit et vide la commande en attente (thread-safe via UI timer)
 
 private:
 	IVRSession();
@@ -126,7 +126,7 @@ private:
 	std::string m_panelPath;
 	bool        m_panelSsl;   // [IVR_ADDON] HTTPS pour serveur VPS distant
 	std::string m_agentId;    // [IVR_ADDON] Identifie l'agent dans les events centralises
-	std::string m_pendingStartCmd; // [IVR_ADDON] Commande start_ivr recue du panel, lue par mainDlg
+	std::string m_pendingCmd;      // [IVR_ADDON] Commande recue du panel ou watchdog, executee par timer UI
 	volatile bool m_pollRunning;   // [IVR_ADDON] Flag arret thread de polling
 };
 

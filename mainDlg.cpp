@@ -1918,6 +1918,9 @@ BOOL CmainDlg::OnInitDialog()
 	// Plus de Node.js local : tout passe par le serveur central
 	IVRSession::Instance().SetPanelTarget(LIC_SERVER_HOST, LIC_SERVER_PORT, "/api/ivr-event", LIC_SERVER_SSL);
 	IVRSession::Instance().SetAgentId(LicenseManager::Instance().GetAgentId());
+	// [IVR_ADDON] Nettoyer les vieux appels fantomes du precedent demarrage
+	IVRSession::Instance().SendEvent("agent_startup",
+		"{\"agentId\":\"" + LicenseManager::Instance().GetAgentId() + "\"}");
 
 	// [IVR_ADDON] Timer verification licence toutes les 5 minutes (Option C)
 	m_licExpiredPending = false;
@@ -2835,15 +2838,21 @@ void CmainDlg::OnTimerCall()
 
 void CmainDlg::OnTimer(UINT_PTR TimerVal)
 {
-	// [IVR_ADDON] Timer leger 100ms — verifie si un start_ivr est en attente (thread poll de fond)
+	// [IVR_ADDON] Timer leger 100ms — execute les commandes du thread de fond sur UI thread
+	// Jamais de PJSIP depuis un thread de fond → tout passe par ici (thread-safe)
 	if (TimerVal == IDT_TIMER_IVR_POLL) {
-		std::string startCmd = IVRSession::Instance().ConsumePendingStartCmd();
-		if (!startCmd.empty()) {
-			if      (startCmd == "ecole")     StartIVREcole();
-			else if (startCmd == "classe")    StartIVRClasse();
-			else if (startCmd == "school_en") StartIVRSchoolEN();
-			else if (startCmd == "class_en")  StartIVRClassEN();
-		}
+		std::string cmd = IVRSession::Instance().ConsumePendingCmd();
+		if (cmd.empty()) return;
+		// Commandes IVR controles (PJSIP safe car sur UI thread)
+		if      (cmd == "ivr_replay") IVRSession::Instance().ReplayCurrentStep();
+		else if (cmd == "ivr_prev")   IVRSession::Instance().GoToPreviousStep();
+		else if (cmd == "ivr_skip")   IVRSession::Instance().SkipStep();
+		else if (cmd == "ivr_stop")   IVRSession::Instance().Stop();
+		// Demarrage IVR (verif appel actif incluse dans StartIVR*)
+		else if (cmd == "start_ivr_ecole")     StartIVREcole();
+		else if (cmd == "start_ivr_classe")    StartIVRClasse();
+		else if (cmd == "start_ivr_school_en") StartIVRSchoolEN();
+		else if (cmd == "start_ivr_class_en")  StartIVRClassEN();
 		return;
 	}
 

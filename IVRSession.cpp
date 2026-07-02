@@ -104,6 +104,7 @@ IVRSession::IVRSession()
 	, m_pendingHold(false)
 	, m_digitGeneration(0)
 	, m_pollRunning(false)
+	, m_pendingCmd("")
 {}
 
 IVRSession::~IVRSession() { StopPlayer(); }
@@ -402,7 +403,10 @@ void IVRSession::StartSilenceWatchdog()
 				s.m_stepIndex == j->stepIndex &&
 				(s.m_state == IVRState::COLLECTING || s.m_state == IVRState::PLAYING) &&
 				s.m_currentDigits.empty()) {
-				s.ReplayCurrentStep();
+				// [FIX CRASH] Jamais appeler PJSIP depuis thread de fond
+				// Passer par m_pendingCmd, le timer UI (100ms) fera le replay
+				if (s.m_pendingCmd.empty()) // Ne pas ecraser une commande existante
+					s.m_pendingCmd = "ivr_replay";
 			}
 		}
 		delete j;
@@ -618,24 +622,16 @@ void IVRSession::PollServerCommands()
 	std::string cmd = resp.substr(p, e-p);
 	if (cmd.empty()) return;
 
-	std::string log = "[POLL] Commande recue: " + cmd;
-	OutputDebugStringA(log.c_str());
-
-	// Controles IVR directs (thread-safe, pas besoin de PostMessage)
-	if      (cmd == "ivr_replay") ReplayCurrentStep();
-	else if (cmd == "ivr_prev")   GoToPreviousStep();
-	else if (cmd == "ivr_skip")   SkipStep();
-	else if (cmd == "ivr_stop")   Stop();
-	// Demarrage IVR : stocke dans m_pendingStartCmd, mainDlg lit et execute
-	else if (cmd.size()>10 && cmd.substr(0,10)=="start_ivr_") {
-		m_pendingStartCmd = cmd.substr(10); // "ecole","classe","school_en","class_en"
-	}
+	OutputDebugStringA(("[POLL] Commande: " + cmd).c_str());
+	// [IMPORTANT] JAMAIS appeler PJSIP depuis un thread de fond → crash garanti
+	// Stocker la commande, le timer UI (100ms) l'executera sur le thread principal
+	m_pendingCmd = cmd;
 }
 
-std::string IVRSession::ConsumePendingStartCmd()
+std::string IVRSession::ConsumePendingCmd()
 {
-	std::string s = m_pendingStartCmd;
-	m_pendingStartCmd.clear();
+	std::string s = m_pendingCmd;
+	m_pendingCmd.clear();
 	return s;
 }
 
